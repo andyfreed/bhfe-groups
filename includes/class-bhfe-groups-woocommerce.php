@@ -848,11 +848,19 @@ class BHFE_Groups_WooCommerce {
 		
 		?>
 		<style>
-			/* Hide payment section */
-			.woocommerce-checkout #payment,
+			/* Hide payment section but keep the button */
 			.woocommerce-checkout #payment_methods,
 			.woocommerce-checkout .payment_methods,
 			.woocommerce-checkout .wc_payment_methods {
+				display: none !important;
+			}
+			
+			/* Show payment section container but hide gateway options */
+			.woocommerce-checkout #payment {
+				display: block !important;
+			}
+			
+			.woocommerce-checkout #payment .payment_methods {
 				display: none !important;
 			}
 			
@@ -876,10 +884,20 @@ class BHFE_Groups_WooCommerce {
 				border-radius: 5px !important;
 				cursor: pointer !important;
 				margin-top: 20px !important;
+				opacity: 1 !important;
+				visibility: visible !important;
 			}
 			
-			.woocommerce-checkout #place_order:hover {
+			.woocommerce-checkout #place_order:hover:not(:disabled) {
 				background-color: #135e96 !important;
+			}
+			
+			/* Disabled state - grayed out */
+			.woocommerce-checkout #place_order:disabled {
+				background-color: #ccc !important;
+				color: #666 !important;
+				cursor: not-allowed !important;
+				opacity: 0.6 !important;
 			}
 			
 			/* Adjust layout - make order review full width */
@@ -893,6 +911,34 @@ class BHFE_Groups_WooCommerce {
 				display: none !important;
 			}
 		</style>
+		<script>
+		jQuery(document).ready(function($) {
+			// Check if this is a group member checkout
+			var isGroupMember = $('#bhfe_group_checkout_confirm').length > 0;
+			
+			if (isGroupMember) {
+				var $checkbox = $('#bhfe_group_checkout_confirm');
+				var $placeOrderBtn = $('#place_order');
+				
+				// Initially disable the button
+				$placeOrderBtn.prop('disabled', true);
+				
+				// Enable/disable based on checkbox
+				$checkbox.on('change', function() {
+					if ($(this).is(':checked')) {
+						$placeOrderBtn.prop('disabled', false);
+					} else {
+						$placeOrderBtn.prop('disabled', true);
+					}
+				});
+				
+				// Also check on page load in case checkbox is pre-checked
+				if ($checkbox.is(':checked')) {
+					$placeOrderBtn.prop('disabled', false);
+				}
+			}
+		});
+		</script>
 		<?php
 	}
 	
