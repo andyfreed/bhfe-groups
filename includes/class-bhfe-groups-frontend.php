@@ -34,11 +34,38 @@ class BHFE_Groups_Frontend {
 		add_filter( 'woocommerce_account_menu_items', array( $this, 'add_groups_menu_item' ) );
 		add_action( 'woocommerce_account_groups_endpoint', array( $this, 'render_groups_endpoint' ) );
 		
+		// Enqueue frontend scripts and styles
+		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_frontend_assets' ) );
+		
 		// Show group info in My Account dashboard
 		add_action( 'woocommerce_account_dashboard', array( $this, 'show_group_info' ), 5 );
 		
 		// Add group info to course pages
 		add_action( 'flms_before_course_content', array( $this, 'show_group_notice' ), 10 );
+	}
+	
+	/**
+	 * Enqueue frontend assets for groups management
+	 */
+	public function enqueue_frontend_assets() {
+		// Only load on groups endpoint
+		if ( ! is_account_page() || ! is_wc_endpoint_url( 'groups' ) ) {
+			return;
+		}
+		
+		// Enqueue Select2 from theme if available
+		$theme_url = get_template_directory_uri();
+		if ( ! wp_script_is( 'select2', 'enqueued' ) ) {
+			wp_enqueue_style( 'select2', $theme_url . '/assets/select2/select2.min.css', false, '4.1.0' );
+			wp_enqueue_script( 'select2', $theme_url . '/assets/select2/select2.min.js', array( 'jquery' ), '4.1.0', true );
+		}
+		
+		// Localize script for AJAX
+		wp_localize_script( 'jquery', 'bhfeGroupsFrontend', array(
+			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
+			'nonce' => wp_create_nonce( 'bhfe-groups-nonce' ),
+			'accountUrl' => wc_get_account_endpoint_url( 'groups' )
+		) );
 	}
 	
 	/**
@@ -98,67 +125,374 @@ class BHFE_Groups_Frontend {
 			$selected_group_id = 0;
 		}
 		
+		// Include the frontend template (variables $groups and $selected_group_id are available)
+		include BHFE_GROUPS_PLUGIN_DIR . 'templates/frontend/groups-page.php';
+		
+		// Include JavaScript (pass selected_group_id)
+		$this->render_frontend_scripts( $selected_group_id );
+	}
+	
+	/**
+	 * Render frontend JavaScript for groups management
+	 */
+	private function render_frontend_scripts( $selected_group_id = 0 ) {
 		?>
-		<div class="bhfe-groups-frontend">
-			<h2><?php esc_html_e( 'Manage Groups', 'bhfe-groups' ); ?></h2>
+		<script type="text/javascript">
+		jQuery(document).ready(function($) {
+			var groupId = <?php echo $selected_group_id ? $selected_group_id : 0; ?>;
+			var ajaxUrl = '<?php echo admin_url( 'admin-ajax.php' ); ?>';
+			var nonce = '<?php echo wp_create_nonce( 'bhfe-groups-nonce' ); ?>';
+			var accountUrl = '<?php echo esc_js( wc_get_account_endpoint_url( 'groups' ) ); ?>';
 			
-			<?php if ( empty( $groups ) && ! $selected_group_id ) : ?>
-				<div class="woocommerce-info">
-					<p><?php esc_html_e( 'You haven\'t created any groups yet.', 'bhfe-groups' ); ?></p>
-					<p><a href="<?php echo esc_url( admin_url( 'admin.php?page=bhfe-groups' ) ); ?>" class="button">
-						<?php esc_html_e( 'Go to Groups Admin', 'bhfe-groups' ); ?>
-					</a></p>
-					<p class="description">
-						<?php esc_html_e( 'Note: Full group management is available in the WordPress admin area.', 'bhfe-groups' ); ?>
-					</p>
-				</div>
-			<?php else : ?>
-				<div class="bhfe-groups-list">
-					<h3><?php esc_html_e( 'Your Groups', 'bhfe-groups' ); ?></h3>
-					<ul>
-						<?php foreach ( $groups as $group ) : ?>
-							<li>
-								<strong><?php echo esc_html( $group->name ); ?></strong>
-								<a href="<?php echo esc_url( admin_url( 'admin.php?page=bhfe-groups&group_id=' . $group->id ) ); ?>" class="button">
-									<?php esc_html_e( 'Manage', 'bhfe-groups' ); ?>
-								</a>
-							</li>
-						<?php endforeach; ?>
-					</ul>
-					<p class="description">
-						<?php esc_html_e( 'Click "Manage" to view members, enrollments, and invoices for each group.', 'bhfe-groups' ); ?>
-					</p>
-				</div>
-			<?php endif; ?>
+			// Initialize Select2 for user search
+			$('#bhfe-member-select').select2({
+				ajax: {
+					url: ajaxUrl,
+					dataType: 'json',
+					delay: 250,
+					data: function(params) {
+						return {
+							action: 'bhfe_groups_search_users',
+							search: params.term,
+							nonce: nonce
+						};
+					},
+					processResults: function(data) {
+						return {
+							results: data.data || []
+						};
+					}
+				},
+				minimumInputLength: 2
+			});
 			
-			<div class="bhfe-groups-actions">
-				<a href="<?php echo esc_url( admin_url( 'admin.php?page=bhfe-groups' ) ); ?>" class="button button-primary">
-					<?php esc_html_e( 'Go to Full Groups Admin', 'bhfe-groups' ); ?>
-				</a>
-			</div>
-		</div>
+			// Initialize Select2 for course search
+			$('#bhfe-enroll-course-select').select2({
+				ajax: {
+					url: ajaxUrl,
+					dataType: 'json',
+					delay: 250,
+					data: function(params) {
+						return {
+							action: 'bhfe_groups_search_courses',
+							search: params.term,
+							nonce: nonce
+						};
+					},
+					processResults: function(data) {
+						return {
+							results: data.data || []
+						};
+					}
+				},
+				minimumInputLength: 2
+			});
+			
+			// Tab switching
+			$('.tab-button').on('click', function() {
+				var tab = $(this).data('tab');
+				$('.tab-button').removeClass('active');
+				$(this).addClass('active');
+				$('.tab-content').removeClass('active');
+				$('#tab-' + tab).addClass('active');
+			});
+			
+			// Add member
+			$('#bhfe-add-member-btn').on('click', function() {
+				var userId = $('#bhfe-member-select').val();
+				if (!userId) {
+					alert('<?php esc_html_e( 'Please select a user.', 'bhfe-groups' ); ?>');
+					return;
+				}
+				
+				$.ajax({
+					url: ajaxUrl,
+					type: 'POST',
+					data: {
+						action: 'bhfe_groups_add_member',
+						group_id: groupId,
+						user_id: userId,
+						nonce: nonce
+					},
+					success: function(response) {
+						if (response.success) {
+							location.reload();
+						} else {
+							alert(response.data.message || '<?php esc_html_e( 'Error adding member.', 'bhfe-groups' ); ?>');
+						}
+					}
+				});
+			});
+			
+			// Remove member
+			$('.bhfe-remove-member').on('click', function() {
+				if (!confirm('<?php esc_html_e( 'Are you sure you want to remove this member?', 'bhfe-groups' ); ?>')) {
+					return;
+				}
+				
+				var userId = $(this).data('user-id');
+				$.ajax({
+					url: ajaxUrl,
+					type: 'POST',
+					data: {
+						action: 'bhfe_groups_remove_member',
+						group_id: groupId,
+						user_id: userId,
+						nonce: nonce
+					},
+					success: function(response) {
+						if (response.success) {
+							location.reload();
+						} else {
+							alert(response.data.message || '<?php esc_html_e( 'Error removing member.', 'bhfe-groups' ); ?>');
+						}
+					}
+				});
+			});
+			
+			// Enroll user
+			$('#bhfe-enroll-btn').on('click', function() {
+				var userId = $('#bhfe-enroll-user-select').val();
+				var courseId = $('#bhfe-enroll-course-select').val();
+				
+				if (!userId || !courseId) {
+					alert('<?php esc_html_e( 'Please select both a user and a course.', 'bhfe-groups' ); ?>');
+					return;
+				}
+				
+				$.ajax({
+					url: ajaxUrl,
+					type: 'POST',
+					data: {
+						action: 'bhfe_groups_enroll_user',
+						group_id: groupId,
+						user_id: userId,
+						course_id: courseId,
+						nonce: nonce
+					},
+					success: function(response) {
+						if (response.success) {
+							location.reload();
+						} else {
+							alert(response.data.message || '<?php esc_html_e( 'Error enrolling user.', 'bhfe-groups' ); ?>');
+						}
+					}
+				});
+			});
+			
+			// Unenroll user
+			$('.bhfe-unenroll').on('click', function() {
+				if (!confirm('<?php esc_html_e( 'Are you sure you want to unenroll this user?', 'bhfe-groups' ); ?>')) {
+					return;
+				}
+				
+				var userId = $(this).data('user-id');
+				var courseId = $(this).data('course-id');
+				
+				$.ajax({
+					url: ajaxUrl,
+					type: 'POST',
+					data: {
+						action: 'bhfe_groups_unenroll_user',
+						group_id: groupId,
+						user_id: userId,
+						course_id: courseId,
+						nonce: nonce
+					},
+					success: function(response) {
+						if (response.success) {
+							location.reload();
+						} else {
+							alert(response.data.message || '<?php esc_html_e( 'Error unenrolling user.', 'bhfe-groups' ); ?>');
+						}
+					}
+				});
+			});
+			
+			// Create group
+			$('#bhfe-create-group-btn').on('click', function() {
+				$('#bhfe-create-group-modal').show();
+			});
+			
+			$('.bhfe-cancel-modal').on('click', function() {
+				$('#bhfe-create-group-modal').hide();
+			});
+			
+			$('#bhfe-create-group-form').on('submit', function(e) {
+				e.preventDefault();
+				var name = $('#group-name').val();
+				
+				if (!name) {
+					alert('<?php esc_html_e( 'Please enter a group name.', 'bhfe-groups' ); ?>');
+					return;
+				}
+				
+				var $submitBtn = $(this).find('button[type="submit"]');
+				$submitBtn.prop('disabled', true).text('<?php esc_html_e( 'Creating...', 'bhfe-groups' ); ?>');
+				
+				$.ajax({
+					url: ajaxUrl,
+					type: 'POST',
+					data: {
+						action: 'bhfe_groups_create_group',
+						name: name,
+						nonce: nonce
+					},
+					success: function(response) {
+						if (response.success) {
+							window.location.href = accountUrl + '?group_id=' + response.data.group_id;
+						} else {
+							alert(response.data.message || '<?php esc_html_e( 'Error creating group.', 'bhfe-groups' ); ?>');
+							$submitBtn.prop('disabled', false).text('<?php esc_html_e( 'Create Group', 'bhfe-groups' ); ?>');
+						}
+					},
+					error: function(xhr, status, error) {
+						console.error('AJAX Error:', status, error);
+						alert('<?php esc_html_e( 'An error occurred. Please check the browser console for details.', 'bhfe-groups' ); ?>');
+						$submitBtn.prop('disabled', false).text('<?php esc_html_e( 'Create Group', 'bhfe-groups' ); ?>');
+					}
+				});
+			});
+		});
+		</script>
 		
 		<style>
-		.bhfe-groups-frontend {
+		.bhfe-groups-frontend-manager {
 			margin: 20px 0;
 		}
-		.bhfe-groups-list ul {
+		.bhfe-groups-container {
+			display: flex;
+			gap: 20px;
+			margin-top: 20px;
+		}
+		.bhfe-groups-sidebar {
+			width: 250px;
+			background: #f9f9f9;
+			padding: 20px;
+			border: 1px solid #ddd;
+		}
+		.bhfe-groups-list {
 			list-style: none;
+			margin: 15px 0 0;
 			padding: 0;
 		}
 		.bhfe-groups-list li {
+			margin: 0 0 5px;
+		}
+		.bhfe-groups-list li a {
+			display: block;
+			padding: 8px 12px;
+			text-decoration: none;
+			border-radius: 3px;
+		}
+		.bhfe-groups-list li.active a,
+		.bhfe-groups-list li a:hover {
+			background: #2271b1;
+			color: #fff;
+		}
+		.bhfe-groups-main {
+			flex: 1;
+		}
+		.bhfe-group-header {
+			border-bottom: 1px solid #ddd;
+			padding-bottom: 20px;
+			margin-bottom: 20px;
+		}
+		.bhfe-group-stats {
+			display: flex;
+			gap: 30px;
+			margin-top: 15px;
+		}
+		.bhfe-group-stats .stat {
+			text-align: center;
+		}
+		.bhfe-group-stats .stat strong {
+			display: block;
+			font-size: 24px;
+			color: #2271b1;
+		}
+		.bhfe-group-tabs {
+			border-bottom: 1px solid #ddd;
+			margin-bottom: 20px;
+		}
+		.tab-button {
+			background: none;
+			border: none;
+			padding: 10px 20px;
+			cursor: pointer;
+			border-bottom: 2px solid transparent;
+			margin-bottom: -1px;
+		}
+		.tab-button.active {
+			border-bottom-color: #2271b1;
+			color: #2271b1;
+		}
+		.tab-content {
+			display: none;
+		}
+		.tab-content.active {
+			display: block;
+		}
+		.bhfe-add-member,
+		.bhfe-enroll-user {
+			margin-bottom: 20px;
 			padding: 15px;
-			margin-bottom: 10px;
 			background: #f9f9f9;
 			border: 1px solid #ddd;
-			display: flex;
-			justify-content: space-between;
-			align-items: center;
 		}
-		.bhfe-groups-actions {
+		.bhfe-add-member select,
+		.bhfe-enroll-user select {
+			margin-right: 10px;
+			margin-bottom: 10px;
+		}
+		.bhfe-pending-total {
 			margin-top: 30px;
-			padding-top: 20px;
-			border-top: 1px solid #ddd;
+			padding: 20px;
+			background: #f0f8ff;
+			border: 2px solid #2271b1;
+			border-radius: 5px;
+		}
+		.bhfe-pending-total .total-amount {
+			font-size: 32px;
+			font-weight: bold;
+			color: #2271b1;
+			margin: 10px 0;
+		}
+		.status-pending {
+			color: #d63638;
+		}
+		.status-active {
+			color: #00a32a;
+		}
+		.status-paid {
+			color: #2271b1;
+		}
+		#bhfe-create-group-modal {
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			background: rgba(0,0,0,0.7);
+			z-index: 100000;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+		.bhfe-modal-content {
+			background: #fff;
+			padding: 30px;
+			border-radius: 5px;
+			max-width: 500px;
+			width: 90%;
+		}
+		@media (max-width: 768px) {
+			.bhfe-groups-container {
+				flex-direction: column;
+			}
+			.bhfe-groups-sidebar {
+				width: 100%;
+			}
 		}
 		</style>
 		<?php
