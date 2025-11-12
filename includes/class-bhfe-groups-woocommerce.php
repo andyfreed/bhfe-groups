@@ -795,6 +795,33 @@ class BHFE_Groups_WooCommerce {
 	}
 	
 	/**
+	 * Hide payment section for group members
+	 */
+	public function hide_payment_section_for_group_members() {
+		if ( ! is_checkout() ) {
+			return;
+		}
+		
+		if ( ! $this->is_group_member_with_courses() ) {
+			return;
+		}
+		
+		?>
+		<style>
+			.woocommerce-checkout #payment,
+			.woocommerce-checkout #payment_methods,
+			.woocommerce-checkout .payment_methods,
+			.woocommerce-checkout .wc_payment_methods {
+				display: none !important;
+			}
+			.woocommerce-checkout #place_order {
+				display: block !important;
+			}
+		</style>
+		<?php
+	}
+	
+	/**
 	 * Validate group checkout confirmation
 	 */
 	public function validate_group_checkout_confirmation() {
