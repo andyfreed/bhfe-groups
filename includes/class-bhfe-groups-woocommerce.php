@@ -61,8 +61,10 @@ class BHFE_Groups_WooCommerce {
 		add_action( 'woocommerce_before_checkout_form', array( $this, 'show_group_checkout_confirmation' ), 5 );
 		add_action( 'woocommerce_checkout_process', array( $this, 'validate_group_checkout_confirmation' ), 10 );
 		
-		// Hide payment section for group members
+		// Hide payment section and billing details for group members
 		add_action( 'wp_head', array( $this, 'hide_payment_section_for_group_members' ) );
+		add_filter( 'woocommerce_checkout_fields', array( $this, 'remove_billing_fields_for_group_members' ), 999 );
+		add_filter( 'woocommerce_order_button_text', array( $this, 'change_place_order_button_text' ), 10 );
 		
 		// Add endpoint for adding group enrollments to cart
 		add_action( 'init', array( $this, 'add_group_checkout_endpoint' ) );
@@ -798,7 +800,42 @@ class BHFE_Groups_WooCommerce {
 	}
 	
 	/**
-	 * Hide payment section for group members
+	 * Remove billing fields for group members
+	 */
+	public function remove_billing_fields_for_group_members( $fields ) {
+		if ( ! is_checkout() ) {
+			return $fields;
+		}
+		
+		if ( ! $this->is_group_member_with_courses() ) {
+			return $fields;
+		}
+		
+		// Remove all billing fields
+		if ( isset( $fields['billing'] ) ) {
+			unset( $fields['billing'] );
+		}
+		
+		return $fields;
+	}
+	
+	/**
+	 * Change Place Order button text for group members
+	 */
+	public function change_place_order_button_text( $button_text ) {
+		if ( ! is_checkout() ) {
+			return $button_text;
+		}
+		
+		if ( ! $this->is_group_member_with_courses() ) {
+			return $button_text;
+		}
+		
+		return __( 'Proceed to Enroll', 'bhfe-groups' );
+	}
+	
+	/**
+	 * Hide payment section and billing details for group members
 	 */
 	public function hide_payment_section_for_group_members() {
 		if ( ! is_checkout() ) {
@@ -811,14 +848,49 @@ class BHFE_Groups_WooCommerce {
 		
 		?>
 		<style>
+			/* Hide payment section */
 			.woocommerce-checkout #payment,
 			.woocommerce-checkout #payment_methods,
 			.woocommerce-checkout .payment_methods,
 			.woocommerce-checkout .wc_payment_methods {
 				display: none !important;
 			}
+			
+			/* Hide billing details section */
+			.woocommerce-checkout .woocommerce-billing-fields,
+			.woocommerce-checkout #customer_details .col-1,
+			.woocommerce-checkout .woocommerce-billing-fields__field-wrapper {
+				display: none !important;
+			}
+			
+			/* Show Place Order button prominently */
 			.woocommerce-checkout #place_order {
 				display: block !important;
+				width: 100% !important;
+				padding: 15px 30px !important;
+				font-size: 18px !important;
+				font-weight: bold !important;
+				background-color: #2271b1 !important;
+				color: #fff !important;
+				border: none !important;
+				border-radius: 5px !important;
+				cursor: pointer !important;
+				margin-top: 20px !important;
+			}
+			
+			.woocommerce-checkout #place_order:hover {
+				background-color: #135e96 !important;
+			}
+			
+			/* Adjust layout - make order review full width */
+			.woocommerce-checkout .woocommerce-checkout-review-order {
+				width: 100% !important;
+			}
+			
+			/* Hide customer details wrapper if it's empty */
+			.woocommerce-checkout #customer_details:empty,
+			.woocommerce-checkout #customer_details .col-1:empty {
+				display: none !important;
 			}
 		</style>
 		<?php
