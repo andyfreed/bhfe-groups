@@ -61,6 +61,9 @@ class BHFE_Groups_WooCommerce {
 		add_action( 'woocommerce_before_checkout_form', array( $this, 'show_group_checkout_confirmation' ), 5 );
 		add_action( 'woocommerce_checkout_process', array( $this, 'validate_group_checkout_confirmation' ), 10 );
 		
+		// Hide payment section for group members
+		add_action( 'wp_head', array( $this, 'hide_payment_section_for_group_members' ) );
+		
 		// Add endpoint for adding group enrollments to cart
 		add_action( 'init', array( $this, 'add_group_checkout_endpoint' ) );
 		add_action( 'template_redirect', array( $this, 'handle_group_checkout' ) );
