@@ -38,6 +38,20 @@ class BHFE_Groups_Admin {
 		// Enqueue admin scripts and styles
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
 		
+		// Add user profile fields for group manager
+		add_action( 'show_user_profile', array( $this, 'add_user_profile_fields' ) );
+		add_action( 'edit_user_profile', array( $this, 'add_user_profile_fields' ) );
+		add_action( 'personal_options_update', array( $this, 'save_user_profile_fields' ) );
+		add_action( 'edit_user_profile_update', array( $this, 'save_user_profile_fields' ) );
+		
+		// Filter capability check to include user meta
+		add_filter( 'user_has_cap', array( $this, 'check_group_manager_capability' ), 10, 4 );
+		
+		// Add bulk actions to users list
+		add_filter( 'bulk_actions-users', array( $this, 'add_bulk_actions' ) );
+		add_filter( 'handle_bulk_actions-users', array( $this, 'handle_bulk_actions' ), 10, 3 );
+		add_action( 'admin_notices', array( $this, 'bulk_action_notices' ) );
+		
 		// Handle AJAX requests
 		add_action( 'wp_ajax_bhfe_groups_add_member', array( $this, 'ajax_add_member' ) );
 		add_action( 'wp_ajax_bhfe_groups_remove_member', array( $this, 'ajax_remove_member' ) );
@@ -366,6 +380,217 @@ class BHFE_Groups_Admin {
 		wp_reset_postdata();
 		
 		wp_send_json_success( $results );
+	}
+	
+	/**
+	 * Add group manager checkbox to user profile
+	 */
+	public function add_user_profile_fields( $user ) {
+		// Only show to users who can edit this user
+		if ( ! current_user_can( 'edit_user', $user->ID ) ) {
+			return;
+		}
+		
+		$is_group_manager = get_user_meta( $user->ID, 'bhfe_is_group_manager', true );
+		?>
+		<h3><?php esc_html_e( 'BHFE Groups', 'bhfe-groups' ); ?></h3>
+		<table class="form-table">
+			<tr>
+				<th>
+					<label for="bhfe_is_group_manager"><?php esc_html_e( 'Group Manager', 'bhfe-groups' ); ?></label>
+				</th>
+				<td>
+					<label for="bhfe_is_group_manager">
+						<input type="checkbox" 
+						       name="bhfe_is_group_manager" 
+						       id="bhfe_is_group_manager" 
+						       value="1" 
+						       <?php checked( $is_group_manager, '1' ); ?> />
+						<?php esc_html_e( 'Allow this user to manage groups', 'bhfe-groups' ); ?>
+					</label>
+					<p class="description">
+						<?php esc_html_e( 'When checked, this user will be able to create and manage groups, add members, and enroll users in courses.', 'bhfe-groups' ); ?>
+					</p>
+				</td>
+			</tr>
+		</table>
+		<?php
+	}
+	
+	/**
+	 * Save group manager checkbox from user profile
+	 */
+	public function save_user_profile_fields( $user_id ) {
+		// Check permissions
+		if ( ! current_user_can( 'edit_user', $user_id ) ) {
+			return false;
+		}
+		
+		// Save or delete the user meta
+		if ( isset( $_POST['bhfe_is_group_manager'] ) && $_POST['bhfe_is_group_manager'] == '1' ) {
+			update_user_meta( $user_id, 'bhfe_is_group_manager', '1' );
+			
+			// Add capability directly to this user
+			$user = get_userdata( $user_id );
+			if ( $user ) {
+				$user->add_cap( 'manage_bhfe_group' );
+			}
+		} else {
+			delete_user_meta( $user_id, 'bhfe_is_group_manager' );
+			
+			// Remove capability from this user (unless they have it from their role)
+			$user = get_userdata( $user_id );
+			if ( $user ) {
+				// Only remove if they don't have it from their role
+				$has_from_role = false;
+				foreach ( $user->roles as $role ) {
+					$role_obj = get_role( $role );
+					if ( $role_obj && $role_obj->has_cap( 'manage_bhfe_group' ) ) {
+						$has_from_role = true;
+						break;
+					}
+				}
+				
+				if ( ! $has_from_role ) {
+					$user->remove_cap( 'manage_bhfe_group' );
+				}
+			}
+		}
+	}
+	
+	/**
+	 * Check if user has group manager capability based on user meta
+	 */
+	public function check_group_manager_capability( $allcaps, $caps, $args, $user ) {
+		// Check if we're asking about manage_bhfe_group capability
+		if ( ! in_array( 'manage_bhfe_group', $caps ) ) {
+			return $allcaps;
+		}
+		
+		// If user already has the capability, return early
+		if ( isset( $allcaps['manage_bhfe_group'] ) && $allcaps['manage_bhfe_group'] ) {
+			return $allcaps;
+		}
+		
+		// Check user meta
+		if ( $user && $user->ID ) {
+			$is_group_manager = get_user_meta( $user->ID, 'bhfe_is_group_manager', true );
+			if ( $is_group_manager === '1' ) {
+				$allcaps['manage_bhfe_group'] = true;
+			}
+		}
+		
+		return $allcaps;
+	}
+	
+	/**
+	 * Add bulk actions to users list
+	 */
+	public function add_bulk_actions( $actions ) {
+		$actions['bhfe_make_group_manager'] = __( 'Make Group Manager', 'bhfe-groups' );
+		$actions['bhfe_remove_group_manager'] = __( 'Remove Group Manager', 'bhfe-groups' );
+		return $actions;
+	}
+	
+	/**
+	 * Handle bulk actions
+	 */
+	public function handle_bulk_actions( $redirect_to, $action, $user_ids ) {
+		if ( ! in_array( $action, array( 'bhfe_make_group_manager', 'bhfe_remove_group_manager' ) ) ) {
+			return $redirect_to;
+		}
+		
+		// Check permissions
+		if ( ! current_user_can( 'edit_users' ) ) {
+			return $redirect_to;
+		}
+		
+		$updated = 0;
+		
+		foreach ( $user_ids as $user_id ) {
+			if ( ! current_user_can( 'edit_user', $user_id ) ) {
+				continue;
+			}
+			
+			$user = get_userdata( $user_id );
+			if ( ! $user ) {
+				continue;
+			}
+			
+			if ( $action === 'bhfe_make_group_manager' ) {
+				update_user_meta( $user_id, 'bhfe_is_group_manager', '1' );
+				$user->add_cap( 'manage_bhfe_group' );
+				$updated++;
+			} elseif ( $action === 'bhfe_remove_group_manager' ) {
+				delete_user_meta( $user_id, 'bhfe_is_group_manager' );
+				
+				// Only remove capability if they don't have it from their role
+				$has_from_role = false;
+				foreach ( $user->roles as $role ) {
+					$role_obj = get_role( $role );
+					if ( $role_obj && $role_obj->has_cap( 'manage_bhfe_group' ) ) {
+						$has_from_role = true;
+						break;
+					}
+				}
+				
+				if ( ! $has_from_role ) {
+					$user->remove_cap( 'manage_bhfe_group' );
+				}
+				$updated++;
+			}
+		}
+		
+		$redirect_to = add_query_arg( 'bhfe_bulk_action', $action, $redirect_to );
+		$redirect_to = add_query_arg( 'bhfe_updated', $updated, $redirect_to );
+		
+		return $redirect_to;
+	}
+	
+	/**
+	 * Show notices for bulk actions
+	 */
+	public function bulk_action_notices() {
+		if ( ! isset( $_GET['bhfe_bulk_action'] ) || ! isset( $_GET['bhfe_updated'] ) ) {
+			return;
+		}
+		
+		$action = sanitize_text_field( $_GET['bhfe_bulk_action'] );
+		$updated = absint( $_GET['bhfe_updated'] );
+		
+		if ( $updated === 0 ) {
+			return;
+		}
+		
+		$message = '';
+		if ( $action === 'bhfe_make_group_manager' ) {
+			$message = sprintf( 
+				_n( 
+					'%d user has been granted group manager access.', 
+					'%d users have been granted group manager access.', 
+					$updated, 
+					'bhfe-groups' 
+				), 
+				$updated 
+			);
+		} elseif ( $action === 'bhfe_remove_group_manager' ) {
+			$message = sprintf( 
+				_n( 
+					'Group manager access has been removed from %d user.', 
+					'Group manager access has been removed from %d users.', 
+					$updated, 
+					'bhfe-groups' 
+				), 
+				$updated 
+			);
+		}
+		
+		if ( $message ) {
+			printf( 
+				'<div class="notice notice-success is-dismissible"><p>%s</p></div>', 
+				esc_html( $message ) 
+			);
+		}
 	}
 }
 
