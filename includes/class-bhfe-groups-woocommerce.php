@@ -33,10 +33,20 @@ class BHFE_Groups_WooCommerce {
 		add_action( 'woocommerce_checkout_process', array( $this, 'check_group_membership' ), 10 );
 		
 		// Allow group members to bypass payment
-		add_filter( 'woocommerce_cart_needs_payment', array( $this, 'maybe_bypass_payment' ), 10, 2 );
+		add_filter( 'woocommerce_cart_needs_payment', array( $this, 'maybe_bypass_payment' ), 999, 2 );
+		add_filter( 'woocommerce_order_needs_payment', array( $this, 'maybe_bypass_order_payment' ), 10, 2 );
+		
+		// Remove payment gateways for group members
+		add_filter( 'woocommerce_available_payment_gateways', array( $this, 'remove_payment_gateways_for_group_members' ), 999 );
+		
+		// Set cart total to 0 for group members
+		add_action( 'woocommerce_cart_calculate_fees', array( $this, 'set_group_cart_total_to_zero' ), 999 );
 		
 		// Handle group checkout
 		add_action( 'woocommerce_checkout_order_processed', array( $this, 'process_group_order' ), 10, 3 );
+		
+		// Set order total to 0 for group members before order is created
+		add_action( 'woocommerce_checkout_create_order', array( $this, 'set_group_order_total_to_zero' ), 10, 2 );
 		
 		// Add group info to order
 		add_action( 'woocommerce_checkout_create_order_line_item', array( $this, 'add_group_info_to_order_item' ), 10, 4 );
@@ -273,9 +283,23 @@ class BHFE_Groups_WooCommerce {
 	 * Maybe bypass payment for group members
 	 */
 	public function maybe_bypass_payment( $needs_payment, $cart ) {
-		$user_id = get_current_user_id();
+		if ( ! $this->is_group_member_with_courses() ) {
+			return $needs_payment;
+		}
 		
-		if ( ! $user_id || ! $cart ) {
+		return false; // No payment needed
+	}
+	
+	/**
+	 * Bypass payment for orders from group members
+	 */
+	public function maybe_bypass_order_payment( $needs_payment, $order ) {
+		if ( ! $order ) {
+			return $needs_payment;
+		}
+		
+		$user_id = $order->get_user_id();
+		if ( ! $user_id ) {
 			return $needs_payment;
 		}
 		
@@ -284,6 +308,94 @@ class BHFE_Groups_WooCommerce {
 		
 		if ( empty( $user_groups ) ) {
 			return $needs_payment;
+		}
+		
+		// Check if order has group meta
+		$group_id = $order->get_meta( '_bhfe_group_id' );
+		if ( $group_id ) {
+			return false; // No payment needed for group orders
+		}
+		
+		// Check if all items are courses
+		$all_courses = true;
+		foreach ( $order->get_items() as $item ) {
+			$product_id = $item->get_product_id();
+			$variation_id = $item->get_variation_id();
+			$check_product_id = $variation_id > 0 ? $variation_id : $product_id;
+			$course_id = $this->get_course_id_from_product( $check_product_id );
+			
+			if ( ! $course_id ) {
+				$all_courses = false;
+				break;
+			}
+		}
+		
+		if ( $all_courses ) {
+			return false; // No payment needed
+		}
+		
+		return $needs_payment;
+	}
+	
+	/**
+	 * Remove payment gateways for group members
+	 */
+	public function remove_payment_gateways_for_group_members( $gateways ) {
+		if ( ! $this->is_group_member_with_courses() ) {
+			return $gateways;
+		}
+		
+		// Remove all payment gateways for group members
+		return array();
+	}
+	
+	/**
+	 * Set cart total to zero for group members with courses
+	 */
+	public function set_group_cart_total_to_zero() {
+		if ( ! $this->is_group_member_with_courses() ) {
+			return;
+		}
+		
+		$cart = WC()->cart;
+		if ( ! $cart ) {
+			return;
+		}
+		
+		// Calculate the total that should be charged
+		$total = $cart->get_subtotal() + $cart->get_fee_total() + $cart->get_shipping_total();
+		
+		// Add a negative fee to make total zero
+		if ( $total > 0 ) {
+			$cart->add_fee( 
+				__( 'Group Member Discount', 'bhfe-groups' ), 
+				-$total,
+				false,
+				'' 
+			);
+		}
+	}
+	
+	/**
+	 * Check if current user is a group member with courses in cart
+	 */
+	private function is_group_member_with_courses() {
+		$user_id = get_current_user_id();
+		
+		if ( ! $user_id ) {
+			return false;
+		}
+		
+		$cart = WC()->cart;
+		if ( ! $cart || $cart->is_empty() ) {
+			return false;
+		}
+		
+		$db = BHFE_Groups_Database::get_instance();
+		$user_groups = $db->get_user_groups( $user_id );
+		
+		if ( empty( $user_groups ) ) {
+			return false;
 		}
 		
 		// Check if all items in cart are courses
@@ -302,13 +414,7 @@ class BHFE_Groups_WooCommerce {
 			}
 		}
 		
-		// If all items are courses and user is in a group, bypass payment
-		// The group admin will be invoiced separately
-		if ( $all_courses ) {
-			return false; // No payment needed
-		}
-		
-		return $needs_payment;
+		return $all_courses;
 	}
 	
 	/**
@@ -357,6 +463,32 @@ class BHFE_Groups_WooCommerce {
 		}
 		
 		return null;
+	}
+	
+	/**
+	 * Set order total to zero for group members
+	 */
+	public function set_group_order_total_to_zero( $order, $data ) {
+		if ( ! $this->is_group_member_with_courses() ) {
+			return;
+		}
+		
+		// Get user's group
+		$user_id = get_current_user_id();
+		$db = BHFE_Groups_Database::get_instance();
+		$user_groups = $db->get_user_groups( $user_id );
+		
+		if ( ! empty( $user_groups ) ) {
+			$group = $user_groups[0];
+			$order->update_meta_data( '_bhfe_group_id', $group->id );
+			$order->update_meta_data( '_bhfe_group_order', 'yes' );
+			$order->update_meta_data( '_bhfe_group_member_checkout', 'yes' );
+		}
+		
+		// Set order total to 0
+		$order->set_total( 0 );
+		$order->set_payment_method( '' );
+		$order->set_payment_method_title( __( 'Group Billing', 'bhfe-groups' ) );
 	}
 	
 	/**
