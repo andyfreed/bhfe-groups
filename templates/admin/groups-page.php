@@ -201,7 +201,7 @@ if ( $selected_group_id ) {
 							<button type="button" class="button button-primary" id="bhfe-create-invoice-btn">
 								<?php esc_html_e( 'Create Invoice', 'bhfe-groups' ); ?>
 							</button>
-							<a href="<?php echo esc_url( wc_get_checkout_url() ); ?>" class="button">
+							<a href="<?php echo esc_url( home_url( '/my-account/group-checkout/?group_id=' . $selected_group_id ) ); ?>" class="button">
 								<?php esc_html_e( 'Checkout on Site', 'bhfe-groups' ); ?>
 							</a>
 						</div>

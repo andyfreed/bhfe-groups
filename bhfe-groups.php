@@ -118,8 +118,9 @@ class BHFE_Groups {
 		// Create database tables
 		BHFE_Groups_Database::create_tables();
 		
-		// Add rewrite endpoint
+		// Add rewrite endpoints
 		add_rewrite_endpoint( 'groups', EP_ROOT | EP_PAGES );
+		add_rewrite_endpoint( 'group-checkout', EP_ROOT | EP_PAGES );
 		
 		// Flush rewrite rules
 		flush_rewrite_rules();

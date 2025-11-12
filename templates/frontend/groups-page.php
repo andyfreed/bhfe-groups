@@ -198,7 +198,7 @@ if ( $selected_group_id ) {
 						<div class="bhfe-pending-total">
 							<h4><?php esc_html_e( 'Pending Invoice Total', 'bhfe-groups' ); ?></h4>
 							<p class="total-amount"><?php echo wc_price( $pending_total ); ?></p>
-							<a href="<?php echo esc_url( wc_get_checkout_url() ); ?>" class="button button-primary">
+							<a href="<?php echo esc_url( home_url( '/my-account/group-checkout/?group_id=' . $selected_group_id ) ); ?>" class="button button-primary">
 								<?php esc_html_e( 'Checkout on Site', 'bhfe-groups' ); ?>
 							</a>
 						</div>
