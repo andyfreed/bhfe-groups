@@ -470,6 +470,10 @@ jQuery(document).ready(function($) {
 			return;
 		}
 		
+		// Disable button to prevent double submission
+		var $submitBtn = $(this).find('button[type="submit"]');
+		$submitBtn.prop('disabled', true).text('<?php esc_html_e( 'Creating...', 'bhfe-groups' ); ?>');
+		
 		$.ajax({
 			url: ajaxUrl,
 			type: 'POST',
@@ -483,7 +487,14 @@ jQuery(document).ready(function($) {
 					window.location.href = '<?php echo admin_url( 'admin.php?page=bhfe-groups' ); ?>&group_id=' + response.data.group_id;
 				} else {
 					alert(response.data.message || '<?php esc_html_e( 'Error creating group.', 'bhfe-groups' ); ?>');
+					$submitBtn.prop('disabled', false).text('<?php esc_html_e( 'Create Group', 'bhfe-groups' ); ?>');
 				}
+			},
+			error: function(xhr, status, error) {
+				console.error('AJAX Error:', status, error);
+				console.error('Response:', xhr.responseText);
+				alert('<?php esc_html_e( 'An error occurred. Please check the browser console for details.', 'bhfe-groups' ); ?>');
+				$submitBtn.prop('disabled', false).text('<?php esc_html_e( 'Create Group', 'bhfe-groups' ); ?>');
 			}
 		});
 	});

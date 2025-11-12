@@ -266,14 +266,24 @@ class BHFE_Groups_Admin {
 	 * AJAX: Create new group
 	 */
 	public function ajax_create_group() {
-		check_ajax_referer( 'bhfe-groups-nonce', 'nonce' );
+		// Verify nonce
+		if ( ! check_ajax_referer( 'bhfe-groups-nonce', 'nonce', false ) ) {
+			wp_send_json_error( array( 'message' => __( 'Security check failed. Please refresh the page and try again.', 'bhfe-groups' ) ) );
+		}
 		
 		$name = isset( $_POST['name'] ) ? sanitize_text_field( $_POST['name'] ) : '';
 		$current_user_id = get_current_user_id();
 		
+		if ( ! $current_user_id ) {
+			wp_send_json_error( array( 'message' => __( 'You must be logged in to create a group.', 'bhfe-groups' ) ) );
+		}
+		
 		if ( empty( $name ) ) {
 			wp_send_json_error( array( 'message' => __( 'Group name is required.', 'bhfe-groups' ) ) );
 		}
+		
+		// Ensure database tables exist
+		BHFE_Groups_Database::create_tables();
 		
 		$db = BHFE_Groups_Database::get_instance();
 		$group_id = $db->create_group( $name, $current_user_id );
@@ -284,7 +294,12 @@ class BHFE_Groups_Admin {
 				'message' => __( 'Group created successfully.', 'bhfe-groups' )
 			) );
 		} else {
-			wp_send_json_error( array( 'message' => __( 'Failed to create group.', 'bhfe-groups' ) ) );
+			global $wpdb;
+			$error_message = __( 'Failed to create group.', 'bhfe-groups' );
+			if ( $wpdb->last_error ) {
+				$error_message .= ' ' . __( 'Database error:', 'bhfe-groups' ) . ' ' . $wpdb->last_error;
+			}
+			wp_send_json_error( array( 'message' => $error_message ) );
 		}
 	}
 	
