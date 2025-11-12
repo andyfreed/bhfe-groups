@@ -63,7 +63,7 @@ class BHFE_Groups {
 		$this->init_woocommerce();
 		
 		// Activation/Deactivation hooks
-		register_activation_hook( __FILE__, array( 'BHFE_Groups_Database', 'create_tables' ) );
+		register_activation_hook( __FILE__, array( $this, 'activate' ) );
 		register_deactivation_hook( __FILE__, array( $this, 'deactivate' ) );
 	}
 	
@@ -112,10 +112,25 @@ class BHFE_Groups {
 	}
 	
 	/**
+	 * Plugin activation
+	 */
+	public static function activate() {
+		// Create database tables
+		BHFE_Groups_Database::create_tables();
+		
+		// Add rewrite endpoint
+		add_rewrite_endpoint( 'groups', EP_ROOT | EP_PAGES );
+		
+		// Flush rewrite rules
+		flush_rewrite_rules();
+	}
+	
+	/**
 	 * Plugin deactivation
 	 */
 	public function deactivate() {
-		// Clean up if needed
+		// Flush rewrite rules
+		flush_rewrite_rules();
 	}
 }
 
