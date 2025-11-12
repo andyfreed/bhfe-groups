@@ -47,6 +47,10 @@ class BHFE_Groups_WooCommerce {
 		// Show group info in cart
 		add_action( 'woocommerce_before_cart', array( $this, 'show_group_info_in_cart' ) );
 		
+		// Add group confirmation to checkout for group members
+		add_action( 'woocommerce_before_checkout_form', array( $this, 'show_group_checkout_confirmation' ), 5 );
+		add_action( 'woocommerce_checkout_process', array( $this, 'validate_group_checkout_confirmation' ), 10 );
+		
 		// Add endpoint for adding group enrollments to cart
 		add_action( 'init', array( $this, 'add_group_checkout_endpoint' ) );
 		add_action( 'template_redirect', array( $this, 'handle_group_checkout' ) );
@@ -485,17 +489,33 @@ class BHFE_Groups_WooCommerce {
 		global $wpdb;
 		$table = $wpdb->prefix . 'bhfe_group_enrollments';
 		
-		$wpdb->update(
-			$table,
-			array( 'order_id' => absint( $order_id ) ),
-			array( 
-				'group_id' => absint( $group_id ),
-				'user_id' => absint( $user_id ),
-				'course_id' => absint( $course_id )
-			),
-			array( '%d' ),
-			array( '%d', '%d', '%d' )
-		);
+		// Find the most recent active enrollment for this user/course/group that doesn't have an order_id yet
+		$enrollment = $wpdb->get_row( $wpdb->prepare( 
+			"SELECT id FROM $table 
+			WHERE group_id = %d 
+			AND user_id = %d 
+			AND course_id = %d 
+			AND status = 'active'
+			AND (order_id IS NULL OR order_id = 0)
+			ORDER BY enrolled_at DESC 
+			LIMIT 1",
+			$group_id,
+			$user_id,
+			$course_id
+		) );
+		
+		if ( $enrollment ) {
+			$wpdb->update(
+				$table,
+				array( 'order_id' => absint( $order_id ) ),
+				array( 'id' => $enrollment->id ),
+				array( '%d' ),
+				array( '%d' )
+			);
+			return true;
+		}
+		
+		return false;
 	}
 	
 	/**
@@ -562,10 +582,129 @@ class BHFE_Groups_WooCommerce {
 		
 		if ( ! empty( $user_groups ) ) {
 			$group = $user_groups[0];
+			$group_admin = get_userdata( $group->admin_user_id );
+			$admin_name = $group_admin ? $group_admin->display_name : __( 'Group Administrator', 'bhfe-groups' );
+			
 			echo '<div class="woocommerce-info bhfe-group-cart-notice">';
-			echo '<strong>Group Member:</strong> You are a member of "' . esc_html( $group->name ) . '". ';
-			echo 'Your courses will be added to the group account and invoiced to the group administrator.';
+			echo '<strong>' . esc_html__( 'Group Member:', 'bhfe-groups' ) . '</strong> ';
+			echo esc_html__( 'You are a member of', 'bhfe-groups' ) . ' "' . esc_html( $group->name ) . '". ';
+			echo esc_html__( 'Your courses will be added to the group account and invoiced to', 'bhfe-groups' ) . ' ' . esc_html( $admin_name ) . '.';
 			echo '</div>';
+		}
+	}
+	
+	/**
+	 * Show group checkout confirmation for group members
+	 */
+	public function show_group_checkout_confirmation() {
+		$user_id = get_current_user_id();
+		
+		if ( ! $user_id ) {
+			return;
+		}
+		
+		$db = BHFE_Groups_Database::get_instance();
+		$user_groups = $db->get_user_groups( $user_id );
+		
+		if ( empty( $user_groups ) ) {
+			return; // Not a group member
+		}
+		
+		$group = $user_groups[0];
+		$group_admin = get_userdata( $group->admin_user_id );
+		$admin_name = $group_admin ? $group_admin->display_name : __( 'Group Administrator', 'bhfe-groups' );
+		$admin_email = $group_admin ? $group_admin->user_email : '';
+		
+		// Check if cart contains courses
+		$cart = WC()->cart;
+		if ( ! $cart ) {
+			return;
+		}
+		
+		$has_courses = false;
+		foreach ( $cart->get_cart() as $cart_item ) {
+			$product_id = isset( $cart_item['variation_id'] ) && $cart_item['variation_id'] > 0 
+				? $cart_item['variation_id'] 
+				: $cart_item['product_id'];
+			
+			$course_id = $this->get_course_id_from_product( $product_id );
+			if ( $course_id ) {
+				$has_courses = true;
+				break;
+			}
+		}
+		
+		if ( ! $has_courses ) {
+			return; // No courses in cart
+		}
+		
+		?>
+		<div class="bhfe-group-checkout-confirmation woocommerce-info" style="background: #f0f8ff; border: 2px solid #2271b1; padding: 20px; margin-bottom: 30px; border-radius: 5px;">
+			<h3 style="margin-top: 0;"><?php esc_html_e( 'Group Membership Checkout', 'bhfe-groups' ); ?></h3>
+			<p>
+				<strong><?php esc_html_e( 'You are a member of:', 'bhfe-groups' ); ?></strong> <?php echo esc_html( $group->name ); ?><br>
+				<strong><?php esc_html_e( 'Group Administrator:', 'bhfe-groups' ); ?></strong> <?php echo esc_html( $admin_name ); ?>
+				<?php if ( $admin_email ) : ?>
+					(<?php echo esc_html( $admin_email ); ?>)
+				<?php endif; ?>
+			</p>
+			<p>
+				<?php esc_html_e( 'The courses in your cart will be added to your account immediately, but you will not be charged. Instead, the group administrator will be invoiced for these courses.', 'bhfe-groups' ); ?>
+			</p>
+			<p>
+				<label for="bhfe_group_checkout_confirm" style="font-weight: bold; display: block; margin-bottom: 10px;">
+					<input type="checkbox" id="bhfe_group_checkout_confirm" name="bhfe_group_checkout_confirm" value="1" required />
+					<?php esc_html_e( 'I understand that these courses will be billed to the group administrator and I will not be charged.', 'bhfe-groups' ); ?>
+				</label>
+			</p>
+			<input type="hidden" name="bhfe_group_id" value="<?php echo esc_attr( $group->id ); ?>" />
+		</div>
+		<?php
+	}
+	
+	/**
+	 * Validate group checkout confirmation
+	 */
+	public function validate_group_checkout_confirmation() {
+		$user_id = get_current_user_id();
+		
+		if ( ! $user_id ) {
+			return;
+		}
+		
+		$db = BHFE_Groups_Database::get_instance();
+		$user_groups = $db->get_user_groups( $user_id );
+		
+		if ( empty( $user_groups ) ) {
+			return; // Not a group member
+		}
+		
+		// Check if cart contains courses
+		$cart = WC()->cart;
+		if ( ! $cart ) {
+			return;
+		}
+		
+		$has_courses = false;
+		foreach ( $cart->get_cart() as $cart_item ) {
+			$product_id = isset( $cart_item['variation_id'] ) && $cart_item['variation_id'] > 0 
+				? $cart_item['variation_id'] 
+				: $cart_item['product_id'];
+			
+			$course_id = $this->get_course_id_from_product( $product_id );
+			if ( $course_id ) {
+				$has_courses = true;
+				break;
+			}
+		}
+		
+		if ( ! $has_courses ) {
+			return; // No courses in cart
+		}
+		
+		// Require confirmation checkbox
+		if ( ! isset( $_POST['bhfe_group_checkout_confirm'] ) || $_POST['bhfe_group_checkout_confirm'] != '1' ) {
+			wc_add_notice( __( 'Please confirm that you understand the courses will be billed to the group administrator.', 'bhfe-groups' ), 'error' );
 		}
 	}
 }
