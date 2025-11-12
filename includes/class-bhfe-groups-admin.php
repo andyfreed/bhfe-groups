@@ -29,6 +29,9 @@ class BHFE_Groups_Admin {
 	 * Initialize hooks
 	 */
 	private function init_hooks() {
+		// Ensure capabilities are set (in case plugin was activated before this update)
+		add_action( 'admin_init', array( $this, 'ensure_capabilities' ) );
+		
 		// Add admin menu
 		add_action( 'admin_menu', array( $this, 'add_admin_menu' ) );
 		
@@ -43,6 +46,23 @@ class BHFE_Groups_Admin {
 		add_action( 'wp_ajax_bhfe_groups_create_group', array( $this, 'ajax_create_group' ) );
 		add_action( 'wp_ajax_bhfe_groups_search_users', array( $this, 'ajax_search_users' ) );
 		add_action( 'wp_ajax_bhfe_groups_search_courses', array( $this, 'ajax_search_courses' ) );
+	}
+	
+	/**
+	 * Ensure capabilities are assigned to roles
+	 */
+	public function ensure_capabilities() {
+		// Add capability for group admins
+		$customer_role = get_role( 'customer' );
+		if ( $customer_role && ! $customer_role->has_cap( 'manage_bhfe_group' ) ) {
+			$customer_role->add_cap( 'manage_bhfe_group' );
+		}
+		
+		// Also add to administrator role
+		$admin_role = get_role( 'administrator' );
+		if ( $admin_role && ! $admin_role->has_cap( 'manage_bhfe_group' ) ) {
+			$admin_role->add_cap( 'manage_bhfe_group' );
+		}
 	}
 	
 	/**

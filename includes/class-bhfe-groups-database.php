@@ -101,9 +101,15 @@ class BHFE_Groups_Database {
 		dbDelta( $invoices_sql );
 		
 		// Add capability for group admins
-		$role = get_role( 'customer' );
-		if ( $role ) {
-			$role->add_cap( 'manage_bhfe_group' );
+		$customer_role = get_role( 'customer' );
+		if ( $customer_role ) {
+			$customer_role->add_cap( 'manage_bhfe_group' );
+		}
+		
+		// Also add to administrator role
+		$admin_role = get_role( 'administrator' );
+		if ( $admin_role ) {
+			$admin_role->add_cap( 'manage_bhfe_group' );
 		}
 	}
 	
