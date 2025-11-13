@@ -59,6 +59,7 @@ class BHFE_Groups_WooCommerce {
 		
 		// Add group confirmation to checkout for group members
 		add_action( 'woocommerce_before_checkout_form', array( $this, 'show_group_checkout_confirmation' ), 5 );
+		add_action( 'woocommerce_checkout_before_order_review', array( $this, 'show_group_checkout_confirmation_inside_form' ), 5 );
 		add_action( 'woocommerce_checkout_process', array( $this, 'validate_group_checkout_confirmation' ), 10 );
 		
 		// Hide payment section and billing details for group members
@@ -731,7 +732,7 @@ class BHFE_Groups_WooCommerce {
 	}
 	
 	/**
-	 * Show group checkout confirmation for group members
+	 * Show group checkout confirmation for group members (before form)
 	 */
 	public function show_group_checkout_confirmation() {
 		$user_id = get_current_user_id();
@@ -788,9 +789,57 @@ class BHFE_Groups_WooCommerce {
 			<p>
 				<?php esc_html_e( 'The courses in your cart will be added to your account immediately, but you will not be charged. Instead, the group administrator will be invoiced for these courses.', 'bhfe-groups' ); ?>
 			</p>
-			<p>
-				<label for="bhfe_group_checkout_confirm" style="font-weight: bold; display: block; margin-bottom: 10px;">
-					<input type="checkbox" id="bhfe_group_checkout_confirm" name="bhfe_group_checkout_confirm" value="1" required />
+		</div>
+		<?php
+	}
+	
+	/**
+	 * Show group checkout confirmation checkbox inside the form
+	 */
+	public function show_group_checkout_confirmation_inside_form() {
+		$user_id = get_current_user_id();
+		
+		if ( ! $user_id ) {
+			return;
+		}
+		
+		$db = BHFE_Groups_Database::get_instance();
+		$user_groups = $db->get_user_groups( $user_id );
+		
+		if ( empty( $user_groups ) ) {
+			return; // Not a group member
+		}
+		
+		$group = $user_groups[0];
+		
+		// Check if cart contains courses
+		$cart = WC()->cart;
+		if ( ! $cart ) {
+			return;
+		}
+		
+		$has_courses = false;
+		foreach ( $cart->get_cart() as $cart_item ) {
+			$product_id = isset( $cart_item['variation_id'] ) && $cart_item['variation_id'] > 0 
+				? $cart_item['variation_id'] 
+				: $cart_item['product_id'];
+			
+			$course_id = $this->get_course_id_from_product( $product_id );
+			if ( $course_id ) {
+				$has_courses = true;
+				break;
+			}
+		}
+		
+		if ( ! $has_courses ) {
+			return; // No courses in cart
+		}
+		
+		?>
+		<div class="bhfe-group-checkout-confirmation-checkbox" style="background: #fff3cd; border: 2px solid #ffc107; padding: 15px; margin-bottom: 20px; border-radius: 5px;">
+			<p style="margin: 0 0 10px 0;">
+				<label for="bhfe_group_checkout_confirm" style="font-weight: bold; display: block; cursor: pointer;">
+					<input type="checkbox" id="bhfe_group_checkout_confirm" name="bhfe_group_checkout_confirm" value="1" style="margin-right: 8px;" />
 					<?php esc_html_e( 'I understand that these courses will be billed to the group administrator and I will not be charged.', 'bhfe-groups' ); ?>
 				</label>
 			</p>
@@ -919,6 +968,7 @@ class BHFE_Groups_WooCommerce {
 			if (isGroupMember) {
 				var $checkbox = $('#bhfe_group_checkout_confirm');
 				var $placeOrderBtn = $('#place_order');
+				var $checkoutForm = $('form.checkout');
 				
 				// Initially disable the button
 				$placeOrderBtn.prop('disabled', true);
@@ -936,6 +986,55 @@ class BHFE_Groups_WooCommerce {
 				if ($checkbox.is(':checked')) {
 					$placeOrderBtn.prop('disabled', false);
 				}
+				
+				// Ensure checkbox value is included in form submission
+				// Add a hidden field that gets updated based on checkbox state
+				if ($checkoutForm.length && !$checkoutForm.find('input[name="bhfe_group_checkout_confirm_hidden"]').length) {
+					$checkoutForm.append('<input type="hidden" name="bhfe_group_checkout_confirm_hidden" value="0" />');
+				}
+				
+				// Update hidden field when checkbox changes
+				$checkbox.on('change', function() {
+					var $hiddenField = $checkoutForm.find('input[name="bhfe_group_checkout_confirm_hidden"]');
+					if ($hiddenField.length) {
+						$hiddenField.val($(this).is(':checked') ? '1' : '0');
+					}
+				});
+				
+				// Ensure checkbox value is included before form submission
+				// Hook into WooCommerce checkout form submission
+				$checkoutForm.on('submit', function(e) {
+					if ($checkbox.is(':checked')) {
+						// Ensure the checkbox value is in the form data
+						var $hiddenConfirm = $checkoutForm.find('input[name="bhfe_group_checkout_confirm"]');
+						if (!$hiddenConfirm.length) {
+							$checkoutForm.append('<input type="hidden" name="bhfe_group_checkout_confirm" value="1" />');
+						}
+						// Also update hidden field
+						var $hiddenField = $checkoutForm.find('input[name="bhfe_group_checkout_confirm_hidden"]');
+						if ($hiddenField.length) {
+							$hiddenField.val('1');
+						}
+					}
+				});
+				
+				// Handle WooCommerce AJAX checkout (before AJAX request)
+				$(document.body).on('checkout_place_order', function() {
+					if ($checkbox.is(':checked')) {
+						// Ensure the checkbox value is in the form data
+						var $hiddenConfirm = $checkoutForm.find('input[name="bhfe_group_checkout_confirm"]');
+						if (!$hiddenConfirm.length) {
+							$checkoutForm.append('<input type="hidden" name="bhfe_group_checkout_confirm" value="1" />');
+						} else {
+							$hiddenConfirm.val('1');
+						}
+						// Also update hidden field
+						var $hiddenField = $checkoutForm.find('input[name="bhfe_group_checkout_confirm_hidden"]');
+						if ($hiddenField.length) {
+							$hiddenField.val('1');
+						}
+					}
+				});
 			}
 		});
 		</script>
@@ -983,7 +1082,15 @@ class BHFE_Groups_WooCommerce {
 		}
 		
 		// Require confirmation checkbox
-		if ( ! isset( $_POST['bhfe_group_checkout_confirm'] ) || $_POST['bhfe_group_checkout_confirm'] != '1' ) {
+		// Check both the checkbox field and the hidden field (for AJAX compatibility)
+		$confirmed = false;
+		if ( isset( $_POST['bhfe_group_checkout_confirm'] ) && $_POST['bhfe_group_checkout_confirm'] == '1' ) {
+			$confirmed = true;
+		} elseif ( isset( $_POST['bhfe_group_checkout_confirm_hidden'] ) && $_POST['bhfe_group_checkout_confirm_hidden'] == '1' ) {
+			$confirmed = true;
+		}
+		
+		if ( ! $confirmed ) {
 			wc_add_notice( __( 'Please confirm that you understand the courses will be billed to the group administrator.', 'bhfe-groups' ), 'error' );
 		}
 	}
