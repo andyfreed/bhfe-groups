@@ -61,9 +61,7 @@ class BHFE_Groups_Enrollment {
 			$enrollment_id = $wpdb->insert_id;
 			
 			// If FLMS is available, enroll the user
-			if ( function_exists( 'flms_enroll_user' ) ) {
-				$this->process_flms_enrollment( $user_id, $course_id, $course_version );
-			}
+			$this->process_flms_enrollment( $user_id, $course_id, $course_version );
 			
 			// Update status to active
 			$wpdb->update(
@@ -158,10 +156,18 @@ class BHFE_Groups_Enrollment {
 	 * Process FLMS enrollment
 	 */
 	private function process_flms_enrollment( $user_id, $course_id, $course_version ) {
-		// Check if FLMS progress class exists
+		// Try function first (if available)
+		if ( function_exists( 'flms_enroll_user' ) ) {
+			flms_enroll_user( $user_id, $course_id, $course_version );
+			return;
+		}
+		
+		// Fallback to class method
 		if ( class_exists( 'FLMS_Course_Progress' ) ) {
 			$progress = new FLMS_Course_Progress();
-			$progress->enroll_user( $user_id, $course_id, $course_version );
+			if ( method_exists( $progress, 'enroll_user' ) ) {
+				$progress->enroll_user( $user_id, $course_id, $course_version );
+			}
 		}
 	}
 	

@@ -556,9 +556,17 @@ class BHFE_Groups_WooCommerce {
 		// Get the first group (or you could let user select)
 		$group = $user_groups[0];
 		
+		// Check if user is the group manager/admin
+		$is_group_manager = $db->is_group_admin( $user_id, $group->id );
+		
 		// Add order meta to track it's a group order
 		$order->update_meta_data( '_bhfe_group_id', $group->id );
 		$order->update_meta_data( '_bhfe_group_order', 'yes' );
+		if ( $is_group_manager ) {
+			$order->update_meta_data( '_bhfe_group_manager_checkout', 'yes' );
+		} else {
+			$order->update_meta_data( '_bhfe_group_member_checkout', 'yes' );
+		}
 		$order->save();
 		
 		// Process enrollments for each item
@@ -610,14 +618,22 @@ class BHFE_Groups_WooCommerce {
 					$user_id // Self-enrolled via checkout
 				);
 				
-				// Link enrollment to order
-				$this->link_enrollment_to_order( $group->id, $user_id, $course_id, $order_id );
+				// Only link enrollment to order if user is the group manager
+				// Regular members' enrollments should remain "pending" (order_id = NULL) 
+				// until the manager pays, so they stay in the running total
+				if ( $is_group_manager ) {
+					$this->link_enrollment_to_order( $group->id, $user_id, $course_id, $order_id );
+				}
 			}
 		}
 		
-		// Create invoice for pending enrollments
-		$invoice = BHFE_Groups_Invoice::get_instance();
-		$invoice->create_invoice( $group->id, $order_id );
+		// Only create invoice and link pending enrollments if user is the group manager
+		// Regular group members should NOT be able to clear the running total
+		if ( $is_group_manager ) {
+			// Create invoice for pending enrollments (only managers can do this)
+			$invoice = BHFE_Groups_Invoice::get_instance();
+			$invoice->create_invoice( $group->id, $order_id );
+		}
 	}
 	
 	/**
