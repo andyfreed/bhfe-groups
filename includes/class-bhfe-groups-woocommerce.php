@@ -74,6 +74,9 @@ class BHFE_Groups_WooCommerce {
 		// Store group enrollment data in cart items
 		add_filter( 'woocommerce_add_cart_item_data', array( $this, 'add_group_cart_item_data' ), 10, 3 );
 		add_filter( 'woocommerce_get_item_data', array( $this, 'display_group_cart_item_data' ), 10, 2 );
+		
+		// AJAX: prepare group checkout
+		add_action( 'wp_ajax_bhfe_groups_prepare_checkout', array( $this, 'ajax_prepare_group_checkout' ) );
 	}
 	
 	/**
@@ -92,8 +95,6 @@ class BHFE_Groups_WooCommerce {
 		}
 		
 		$action = isset( $_GET['action'] ) ? sanitize_key( $_GET['action'] ) : '';
-		
-		// Only run processing logic when explicitly requested
 		if ( 'process' !== $action ) {
 			return;
 		}
@@ -105,42 +106,96 @@ class BHFE_Groups_WooCommerce {
 		}
 		
 		$group_id = isset( $_GET['group_id'] ) ? absint( $_GET['group_id'] ) : 0;
+		$result = $this->prepare_group_checkout( $group_id, $user_id );
 		
-		if ( ! $group_id ) {
-			wc_add_notice( __( 'Invalid group ID.', 'bhfe-groups' ), 'error' );
-			wp_redirect( wc_get_account_endpoint_url( 'groups' ) );
+		if ( is_wp_error( $result ) ) {
+			wc_add_notice( $result->get_error_message(), 'error' );
+			
+			$redirect = $result->get_error_data( 'redirect' );
+			if ( ! $redirect ) {
+				$redirect = wc_get_account_endpoint_url( 'group-checkout' ) . '?group_id=' . $group_id;
+			}
+			
+			wp_redirect( $redirect );
 			exit;
+		}
+		
+		if ( ! empty( $result['errors'] ) ) {
+			foreach ( $result['errors'] as $error_message ) {
+				wc_add_notice( $error_message, 'notice' );
+			}
+		}
+		
+		if ( $result['added_count'] > 0 ) {
+			wc_add_notice(
+				sprintf(
+					_n( '%d course ready for checkout.', '%d courses ready for checkout.', $result['added_count'], 'bhfe-groups' ),
+					$result['added_count']
+				),
+				'success'
+			);
+		}
+		
+		wp_redirect( $result['checkout_url'] );
+		exit;
+	}
+	
+	/**
+	 * AJAX: Prepare checkout for group manager
+	 */
+	public function ajax_prepare_group_checkout() {
+		check_ajax_referer( 'bhfe-groups-nonce', 'nonce' );
+		
+		$user_id = get_current_user_id();
+		if ( ! $user_id ) {
+			wp_send_json_error( array( 'message' => __( 'Please log in to continue.', 'bhfe-groups' ) ) );
+		}
+		
+		$group_id = isset( $_POST['group_id'] ) ? absint( $_POST['group_id'] ) : 0;
+		
+		$result = $this->prepare_group_checkout( $group_id, $user_id );
+		
+		if ( is_wp_error( $result ) ) {
+			wp_send_json_error( array( 'message' => $result->get_error_message() ) );
+		}
+		
+		wp_send_json_success( array( 'checkout_url' => $result['checkout_url'] ) );
+	}
+	
+	/**
+	 * Internal helper: add pending enrollments to cart for a group
+	 */
+	private function prepare_group_checkout( $group_id, $user_id ) {
+		if ( ! $group_id ) {
+			return new WP_Error( 'bhfe_invalid_group', __( 'Invalid group ID.', 'bhfe-groups' ) );
 		}
 		
 		$db = BHFE_Groups_Database::get_instance();
+		
 		if ( ! $db->is_group_admin( $user_id, $group_id ) ) {
-			wc_add_notice( __( 'You do not have permission to checkout for this group.', 'bhfe-groups' ), 'error' );
-			wp_redirect( wc_get_account_endpoint_url( 'groups' ) );
-			exit;
+			return new WP_Error( 'bhfe_no_permission', __( 'You do not have permission to checkout for this group.', 'bhfe-groups' ) );
 		}
 		
-		// Get pending enrollments
 		$enrollment = BHFE_Groups_Enrollment::get_instance();
 		$pending_enrollments = $enrollment->get_pending_enrollments( $group_id );
 		
 		if ( empty( $pending_enrollments ) ) {
-			wc_add_notice( __( 'No pending enrollments to checkout.', 'bhfe-groups' ), 'notice' );
-			wp_redirect( wc_get_account_endpoint_url( 'groups' ) . '?group_id=' . $group_id );
-			exit;
+			return new WP_Error(
+				'bhfe_no_pending',
+				__( 'No pending enrollments to checkout.', 'bhfe-groups' ),
+				array( 'redirect' => wc_get_account_endpoint_url( 'group-checkout' ) . '?group_id=' . $group_id )
+			);
 		}
 		
-		// Clear cart first
-		if ( function_exists( 'WC' ) && WC()->cart ) {
-			WC()->cart->empty_cart();
+		if ( ! function_exists( 'WC' ) || ! WC()->cart ) {
+			return new WP_Error( 'bhfe_missing_cart', __( 'Unable to access the cart. Please try again.', 'bhfe-groups' ) );
 		}
+		
+		WC()->cart->empty_cart();
 		
 		$added_count = 0;
 		$errors = array();
 		
-		// Store enrollment mapping in session for cart item data
-		$enrollment_map = array();
-		
-		// Add each enrollment's course product to cart
 		foreach ( $pending_enrollments as $enroll ) {
 			$product_id = $this->get_product_id_from_course( $enroll->course_id );
 			
@@ -149,25 +204,15 @@ class BHFE_Groups_WooCommerce {
 				continue;
 			}
 			
-			// Check if product exists and is purchasable
 			$product = wc_get_product( $product_id );
 			if ( ! $product || ! $product->is_purchasable() ) {
 				$errors[] = sprintf( __( 'Product is not available for course: %s', 'bhfe-groups' ), $enroll->course_title ? $enroll->course_title : 'Course #' . $enroll->course_id );
 				continue;
 			}
 			
-			// Store mapping for this product
-			$enrollment_map[ $product_id ] = array(
-				'bhfe_group_enrollment_id' => $enroll->id,
-				'bhfe_group_id' => $group_id,
-				'bhfe_course_id' => $enroll->course_id
-			);
-			
-			// Add to cart
 			$cart_item_key = WC()->cart->add_to_cart( $product_id, 1 );
 			
 			if ( $cart_item_key ) {
-				// Add enrollment data to cart item
 				WC()->cart->cart_contents[ $cart_item_key ]['bhfe_group_enrollment_id'] = $enroll->id;
 				WC()->cart->cart_contents[ $cart_item_key ]['bhfe_group_id'] = $group_id;
 				WC()->cart->cart_contents[ $cart_item_key ]['bhfe_course_id'] = $enroll->course_id;
@@ -177,22 +222,17 @@ class BHFE_Groups_WooCommerce {
 			}
 		}
 		
-		// Store cart data
 		WC()->cart->set_session();
 		
-		if ( $added_count > 0 ) {
-			wc_add_notice( sprintf( _n( '%d course added to cart.', '%d courses added to cart.', $added_count, 'bhfe-groups' ), $added_count ), 'success' );
+		if ( 0 === $added_count ) {
+			return new WP_Error( 'bhfe_cart_error', __( 'Unable to add pending enrollments to the cart.', 'bhfe-groups' ) );
 		}
 		
-		if ( ! empty( $errors ) ) {
-			foreach ( $errors as $error ) {
-				wc_add_notice( $error, 'error' );
-			}
-		}
-		
-		// Redirect to checkout
-		wp_redirect( wc_get_checkout_url() );
-		exit;
+		return array(
+			'checkout_url' => wc_get_checkout_url(),
+			'added_count'  => $added_count,
+			'errors'       => $errors,
+		);
 	}
 	
 	/**

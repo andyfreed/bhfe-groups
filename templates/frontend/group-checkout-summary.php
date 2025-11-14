@@ -7,10 +7,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$proceed_url = esc_url( add_query_arg( array(
-	'group_id' => $group_id,
-	'action'   => 'process',
-), wc_get_account_endpoint_url( 'group-checkout' ) ) );
 ?>
 
 <div class="bhfe-group-checkout-summary">
@@ -68,13 +64,18 @@ $proceed_url = esc_url( add_query_arg( array(
 			<p class="description"><?php esc_html_e( 'This total will be billed to the group once you complete the checkout.', 'bhfe-groups' ); ?></p>
 		</div>
 		
+		<div class="bhfe-group-checkout-errors" style="display:none;margin-bottom:15px;color:#d63638;"></div>
+		
 		<div class="bhfe-group-checkout-actions">
 			<a class="button" href="<?php echo esc_url( wc_get_account_endpoint_url( 'groups' ) . '?group_id=' . $group_id ); ?>">
 				<?php esc_html_e( 'Back to Group Management', 'bhfe-groups' ); ?>
 			</a>
-			<a class="button button-primary" href="<?php echo $proceed_url; ?>">
+			<button type="button"
+				class="button button-primary"
+				id="bhfe-group-checkout-proceed"
+				data-group-id="<?php echo esc_attr( $group_id ); ?>">
 				<?php esc_html_e( 'Proceed to Checkout', 'bhfe-groups' ); ?>
-			</a>
+			</button>
 		</div>
 	<?php endif; ?>
 </div>

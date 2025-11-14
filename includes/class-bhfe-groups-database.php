@@ -100,16 +100,16 @@ class BHFE_Groups_Database {
 		dbDelta( $enrollments_sql );
 		dbDelta( $invoices_sql );
 		
-		// Add capability for group admins
-		$customer_role = get_role( 'customer' );
-		if ( $customer_role ) {
-			$customer_role->add_cap( 'manage_bhfe_group' );
+		// Add capability for administrators only by default
+		$admin_role = get_role( 'administrator' );
+		if ( $admin_role && ! $admin_role->has_cap( 'manage_bhfe_group' ) ) {
+			$admin_role->add_cap( 'manage_bhfe_group' );
 		}
 		
-		// Also add to administrator role
-		$admin_role = get_role( 'administrator' );
-		if ( $admin_role ) {
-			$admin_role->add_cap( 'manage_bhfe_group' );
+		// Remove legacy capability from customer role if it exists
+		$customer_role = get_role( 'customer' );
+		if ( $customer_role && $customer_role->has_cap( 'manage_bhfe_group' ) ) {
+			$customer_role->remove_cap( 'manage_bhfe_group' );
 		}
 	}
 	

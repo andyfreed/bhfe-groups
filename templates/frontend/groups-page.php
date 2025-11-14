@@ -7,6 +7,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+$can_manage = isset( $can_manage ) ? (bool) $can_manage : false;
+
 $db = BHFE_Groups_Database::get_instance();
 $enrollment = BHFE_Groups_Enrollment::get_instance();
 $invoice = BHFE_Groups_Invoice::get_instance();
@@ -35,9 +37,11 @@ if ( $selected_group_id ) {
 		<div class="bhfe-groups-sidebar">
 			<h3><?php esc_html_e( 'Your Groups', 'bhfe-groups' ); ?></h3>
 			
-			<button type="button" class="button button-primary" id="bhfe-create-group-btn">
-				<?php esc_html_e( '+ Create New Group', 'bhfe-groups' ); ?>
-			</button>
+			<?php if ( $can_manage ) : ?>
+				<button type="button" class="button button-primary" id="bhfe-create-group-btn">
+					<?php esc_html_e( '+ Create New Group', 'bhfe-groups' ); ?>
+				</button>
+			<?php endif; ?>
 			
 			<ul class="bhfe-groups-list">
 				<?php if ( empty( $groups ) ) : ?>

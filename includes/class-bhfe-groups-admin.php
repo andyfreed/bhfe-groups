@@ -66,16 +66,16 @@ class BHFE_Groups_Admin {
 	 * Ensure capabilities are assigned to roles
 	 */
 	public function ensure_capabilities() {
-		// Add capability for group admins
-		$customer_role = get_role( 'customer' );
-		if ( $customer_role && ! $customer_role->has_cap( 'manage_bhfe_group' ) ) {
-			$customer_role->add_cap( 'manage_bhfe_group' );
-		}
-		
-		// Also add to administrator role
+		// Ensure capability is available for administrators
 		$admin_role = get_role( 'administrator' );
 		if ( $admin_role && ! $admin_role->has_cap( 'manage_bhfe_group' ) ) {
 			$admin_role->add_cap( 'manage_bhfe_group' );
+		}
+		
+		// Remove capability from the customer role if it was previously added
+		$customer_role = get_role( 'customer' );
+		if ( $customer_role && $customer_role->has_cap( 'manage_bhfe_group' ) ) {
+			$customer_role->remove_cap( 'manage_bhfe_group' );
 		}
 	}
 	

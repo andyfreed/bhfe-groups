@@ -52,8 +52,12 @@ class BHFE_Groups_Frontend {
 	 * Enqueue frontend assets for groups management
 	 */
 	public function enqueue_frontend_assets() {
-		// Only load on groups endpoint
-		if ( ! is_account_page() || ! is_wc_endpoint_url( 'groups' ) ) {
+		// Only load on groups or group-checkout endpoint
+		if ( ! is_account_page() ) {
+			return;
+		}
+		
+		if ( ! is_wc_endpoint_url( 'groups' ) && ! is_wc_endpoint_url( 'group-checkout' ) ) {
 			return;
 		}
 		
@@ -68,7 +72,9 @@ class BHFE_Groups_Frontend {
 		wp_localize_script( 'jquery', 'bhfeGroupsFrontend', array(
 			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
 			'nonce' => wp_create_nonce( 'bhfe-groups-nonce' ),
-			'accountUrl' => wc_get_account_endpoint_url( 'groups' )
+			'accountUrl' => wc_get_account_endpoint_url( 'groups' ),
+			'genericError' => __( 'Something went wrong. Please try again.', 'bhfe-groups' ),
+			'processingText' => __( 'Preparing checkout...', 'bhfe-groups' )
 		) );
 	}
 	
@@ -90,11 +96,6 @@ class BHFE_Groups_Frontend {
 	 * Add Groups menu item to My Account
 	 */
 	public function add_groups_menu_item( $items ) {
-		// Only show to users who can manage groups
-		if ( ! current_user_can( 'manage_bhfe_group' ) ) {
-			return $items;
-		}
-		
 		// Insert after orders
 		$new_items = array();
 		foreach ( $items as $key => $item ) {
@@ -117,13 +118,21 @@ class BHFE_Groups_Frontend {
 	 */
 	public function render_groups_endpoint() {
 		$user_id = get_current_user_id();
-		
-		if ( ! $user_id || ! current_user_can( 'manage_bhfe_group' ) ) {
-			echo '<p>' . esc_html__( 'You do not have permission to manage groups.', 'bhfe-groups' ) . '</p>';
+		if ( ! $user_id ) {
+			echo '<p>' . esc_html__( 'You must be logged in to view your groups.', 'bhfe-groups' ) . '</p>';
 			return;
 		}
 		
+		$can_manage = current_user_can( 'manage_bhfe_group' );
+		
 		$db = BHFE_Groups_Database::get_instance();
+		
+		if ( ! $can_manage ) {
+			$user_groups = $db->get_user_groups( $user_id );
+			include BHFE_GROUPS_PLUGIN_DIR . 'templates/frontend/groups-member-view.php';
+			return;
+		}
+		
 		$groups = $db->get_groups_by_admin( $user_id );
 		
 		// Handle group selection
@@ -201,6 +210,50 @@ class BHFE_Groups_Frontend {
 			var ajaxUrl = '<?php echo admin_url( 'admin-ajax.php' ); ?>';
 			var nonce = '<?php echo wp_create_nonce( 'bhfe-groups-nonce' ); ?>';
 			var accountUrl = '<?php echo esc_js( wc_get_account_endpoint_url( 'groups' ) ); ?>';
+			
+			// Group checkout proceed button
+			var $proceedBtn = $('#bhfe-group-checkout-proceed');
+			if ( $proceedBtn.length ) {
+				$proceedBtn.on('click', function(e) {
+					e.preventDefault();
+					
+					var groupCheckoutId = $(this).data('group-id');
+					var $button = $(this);
+					var originalText = $button.text();
+					var $errorBox = $('.bhfe-group-checkout-errors');
+					
+					if ( ! groupCheckoutId ) {
+						return;
+					}
+					
+					$errorBox.hide().text('');
+					$button.prop('disabled', true).addClass('loading').text(bhfeGroupsFrontend.processingText || originalText);
+					
+					$.ajax({
+						url: bhfeGroupsFrontend.ajaxUrl,
+						type: 'POST',
+						dataType: 'json',
+						data: {
+							action: 'bhfe_groups_prepare_checkout',
+							group_id: groupCheckoutId,
+							nonce: bhfeGroupsFrontend.nonce
+						},
+						success: function(response) {
+							if ( response.success && response.data.checkout_url ) {
+								window.location.href = response.data.checkout_url;
+							} else {
+								var message = response.data && response.data.message ? response.data.message : bhfeGroupsFrontend.genericError;
+								$errorBox.text( message ).show();
+								$button.prop('disabled', false).removeClass('loading').text( originalText );
+							}
+						},
+						error: function() {
+							$errorBox.text( bhfeGroupsFrontend.genericError ).show();
+							$button.prop('disabled', false).removeClass('loading').text( originalText );
+						}
+					});
+				});
+			}
 			
 			// Initialize Select2 for user search
 			$('#bhfe-member-select').select2({
