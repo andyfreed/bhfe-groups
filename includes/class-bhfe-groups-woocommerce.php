@@ -311,10 +311,20 @@ class BHFE_Groups_WooCommerce {
 		}
 		
 		if ( $product->is_type( 'variation' ) ) {
+			$raw_attributes = $product->get_attributes();
+			$normalized_attributes = array();
+			
+			if ( ! empty( $raw_attributes ) && is_array( $raw_attributes ) ) {
+				foreach ( $raw_attributes as $attr_key => $attr_value ) {
+					$key = 0 === strpos( $attr_key, 'attribute_' ) ? $attr_key : 'attribute_' . $attr_key;
+					$normalized_attributes[ $key ] = $attr_value;
+				}
+			}
+			
 			return array(
 				'product_id'   => $product->get_parent_id(),
 				'variation_id' => $product->get_id(),
-				'variation'    => $product->get_attributes(),
+				'variation'    => $normalized_attributes,
 			);
 		}
 		
