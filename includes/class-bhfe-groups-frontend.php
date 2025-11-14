@@ -172,6 +172,14 @@ class BHFE_Groups_Frontend {
 			return;
 		}
 		
+		// If manager clicked "Proceed to Checkout", run processing logic
+		if ( isset( $_GET['action'] ) && 'process' === sanitize_key( $_GET['action'] ) ) {
+			// Ensure WooCommerce class is instantiated
+			$wc = BHFE_Groups_WooCommerce::get_instance();
+			$wc->handle_group_checkout();
+			return;
+		}
+		
 		$enrollment = BHFE_Groups_Enrollment::get_instance();
 		$invoice = BHFE_Groups_Invoice::get_instance();
 		
