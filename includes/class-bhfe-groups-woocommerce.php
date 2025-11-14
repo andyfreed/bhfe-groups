@@ -271,7 +271,7 @@ class BHFE_Groups_WooCommerce {
 		$product_id = get_post_meta( $course_id, 'flms_woocommerce_product_id', true );
 		
 		if ( $product_id ) {
-			return $this->normalize_product_data( $product_id );
+			return $this->normalize_product_data( $product_id, $course_id );
 		}
 		
 		// Try to find direct product link
@@ -288,7 +288,7 @@ class BHFE_Groups_WooCommerce {
 		) );
 		
 		if ( ! empty( $products ) ) {
-			return $this->normalize_product_data( $products[0]->ID );
+			return $this->normalize_product_data( $products[0]->ID, $course_id );
 		}
 		
 		// Check for variations linked to the course
@@ -305,7 +305,7 @@ class BHFE_Groups_WooCommerce {
 		) );
 		
 		if ( ! empty( $variation_posts ) ) {
-			return $this->normalize_product_data( $variation_posts[0]->ID );
+			return $this->normalize_product_data( $variation_posts[0]->ID, $course_id );
 		}
 		
 		return null;
@@ -314,11 +314,30 @@ class BHFE_Groups_WooCommerce {
 	/**
 	 * Normalize product data for cart usage
 	 */
-	private function normalize_product_data( $product_identifier ) {
+	private function normalize_product_data( $product_identifier, $course_id = null ) {
 		$product = wc_get_product( $product_identifier );
 		
 		if ( ! $product ) {
 			return null;
+		}
+		
+		// If this is a variable product, try to locate the specific variation for this course
+		if ( $product->is_type( 'variable' ) ) {
+			$variation_id = $this->find_variation_for_course( $product, $course_id );
+			
+			if ( ! $variation_id && ! empty( $product->get_default_attributes() ) ) {
+				// Attempt to find variation matching default attributes
+				$variation_id = $product->get_default_attributes() ? $product->get_matching_variation( $product->get_default_attributes() ) : null;
+			}
+			
+			if ( ! $variation_id ) {
+				$children = $product->get_children();
+				$variation_id = ! empty( $children ) ? $children[0] : null;
+			}
+			
+			if ( $variation_id ) {
+				return $this->normalize_product_data( $variation_id, $course_id );
+			}
 		}
 		
 		if ( $product->is_type( 'variation' ) ) {
@@ -344,6 +363,38 @@ class BHFE_Groups_WooCommerce {
 			'variation_id' => 0,
 			'variation'    => array(),
 		);
+	}
+	
+	/**
+	 * Find variation ID associated with a course
+	 */
+	private function find_variation_for_course( $variable_product, $course_id ) {
+		if ( ! $variable_product instanceof WC_Product_Variable ) {
+			return null;
+		}
+		
+		$variation_ids = $variable_product->get_children();
+		
+		foreach ( $variation_ids as $variation_id ) {
+			$course_map = get_post_meta( $variation_id, 'flms_woocommerce_variable_course_ids', true );
+			
+			if ( empty( $course_map ) ) {
+				continue;
+			}
+			
+			$course_map = is_array( $course_map ) ? $course_map : array( $course_map );
+			
+			foreach ( $course_map as $map_entry ) {
+				$parts = explode( ':', $map_entry );
+				$mapped_course_id = isset( $parts[0] ) ? intval( $parts[0] ) : 0;
+				
+				if ( $course_id && $mapped_course_id === intval( $course_id ) ) {
+					return $variation_id;
+				}
+			}
+		}
+		
+		return null;
 	}
 	
 	/**
