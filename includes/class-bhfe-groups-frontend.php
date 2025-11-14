@@ -34,6 +34,10 @@ class BHFE_Groups_Frontend {
 		add_filter( 'woocommerce_account_menu_items', array( $this, 'add_groups_menu_item' ) );
 		add_action( 'woocommerce_account_groups_endpoint', array( $this, 'render_groups_endpoint' ) );
 		
+		// Add Group Checkout endpoint display
+		add_action( 'init', array( $this, 'add_group_checkout_endpoint' ) );
+		add_action( 'woocommerce_account_group-checkout_endpoint', array( $this, 'render_group_checkout_endpoint' ) );
+		
 		// Enqueue frontend scripts and styles
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_frontend_assets' ) );
 		
@@ -73,6 +77,13 @@ class BHFE_Groups_Frontend {
 	 */
 	public function add_groups_endpoint() {
 		add_rewrite_endpoint( 'groups', EP_ROOT | EP_PAGES );
+	}
+	
+	/**
+	 * Add group checkout endpoint (display portion)
+	 */
+	public function add_group_checkout_endpoint() {
+		add_rewrite_endpoint( 'group-checkout', EP_ROOT | EP_PAGES );
 	}
 	
 	/**
@@ -130,6 +141,45 @@ class BHFE_Groups_Frontend {
 		
 		// Include JavaScript (pass selected_group_id)
 		$this->render_frontend_scripts( $selected_group_id );
+	}
+	
+	/**
+	 * Render group checkout endpoint (summary before processing)
+	 */
+	public function render_group_checkout_endpoint() {
+		$user_id = get_current_user_id();
+		
+		if ( ! $user_id ) {
+			echo '<p>' . esc_html__( 'You must be logged in to access this page.', 'bhfe-groups' ) . '</p>';
+			return;
+		}
+		
+		if ( ! current_user_can( 'manage_bhfe_group' ) ) {
+			echo '<p>' . esc_html__( 'You do not have permission to manage groups.', 'bhfe-groups' ) . '</p>';
+			return;
+		}
+		
+		$group_id = isset( $_GET['group_id'] ) ? absint( $_GET['group_id'] ) : 0;
+		if ( ! $group_id ) {
+			echo '<p>' . esc_html__( 'No group selected. Please choose a group to continue.', 'bhfe-groups' ) . '</p>';
+			return;
+		}
+		
+		$db = BHFE_Groups_Database::get_instance();
+		
+		if ( ! $db->is_group_admin( $user_id, $group_id ) ) {
+			echo '<p>' . esc_html__( 'You do not have permission to checkout for this group.', 'bhfe-groups' ) . '</p>';
+			return;
+		}
+		
+		$enrollment = BHFE_Groups_Enrollment::get_instance();
+		$invoice = BHFE_Groups_Invoice::get_instance();
+		
+		$group = $db->get_group( $group_id );
+		$pending_enrollments = $enrollment->get_pending_enrollments( $group_id );
+		$pending_total = $invoice->calculate_running_total( $group_id );
+		
+		include BHFE_GROUPS_PLUGIN_DIR . 'templates/frontend/group-checkout-summary.php';
 	}
 	
 	/**

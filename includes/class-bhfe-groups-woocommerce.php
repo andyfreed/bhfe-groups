@@ -91,6 +91,13 @@ class BHFE_Groups_WooCommerce {
 			return;
 		}
 		
+		$action = isset( $_GET['action'] ) ? sanitize_key( $_GET['action'] ) : '';
+		
+		// Only run processing logic when explicitly requested
+		if ( 'process' !== $action ) {
+			return;
+		}
+		
 		$user_id = get_current_user_id();
 		if ( ! $user_id ) {
 			wp_redirect( wc_get_page_permalink( 'myaccount' ) );
