@@ -197,6 +197,9 @@ class BHFE_Groups_Frontend {
 		$pending_total = $invoice->calculate_running_total( $group_id );
 		
 		include BHFE_GROUPS_PLUGIN_DIR . 'templates/frontend/group-checkout-summary.php';
+		
+		// Load frontend scripts (for proceed button JS, etc.)
+		$this->render_frontend_scripts( $group_id );
 	}
 	
 	/**
