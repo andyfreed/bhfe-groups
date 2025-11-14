@@ -61,6 +61,9 @@ class BHFE_Groups_Frontend {
 			return;
 		}
 		
+		// Ensure jQuery is loaded
+		wp_enqueue_script( 'jquery' );
+		
 		// Enqueue Select2 from theme if available
 		$theme_url = get_template_directory_uri();
 		if ( ! wp_script_is( 'select2', 'enqueued' ) ) {
@@ -208,6 +211,13 @@ class BHFE_Groups_Frontend {
 	private function render_frontend_scripts( $selected_group_id = 0 ) {
 		?>
 		<script type="text/javascript">
+		window.bhfeGroupsFrontend = window.bhfeGroupsFrontend || {
+			ajaxUrl: '<?php echo admin_url( 'admin-ajax.php' ); ?>',
+			nonce: '<?php echo wp_create_nonce( 'bhfe-groups-nonce' ); ?>',
+			accountUrl: '<?php echo esc_js( wc_get_account_endpoint_url( 'groups' ) ); ?>',
+			genericError: '<?php echo esc_js( __( 'Something went wrong. Please try again.', 'bhfe-groups' ) ); ?>',
+			processingText: '<?php echo esc_js( __( 'Preparing checkout...', 'bhfe-groups' ) ); ?>'
+		};
 		jQuery(document).ready(function($) {
 			var groupId = <?php echo $selected_group_id ? $selected_group_id : 0; ?>;
 			var ajaxUrl = '<?php echo admin_url( 'admin-ajax.php' ); ?>';
