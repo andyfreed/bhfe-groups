@@ -187,7 +187,19 @@ class BHFE_Groups_WooCommerce {
 			);
 		}
 		
-		if ( ! function_exists( 'WC' ) || ! WC()->cart ) {
+		if ( ! function_exists( 'WC' ) ) {
+			return new WP_Error( 'bhfe_missing_wc', __( 'WooCommerce is not available. Please try again.', 'bhfe-groups' ) );
+		}
+		
+		if ( is_null( WC()->cart ) ) {
+			wc_load_cart();
+		}
+		
+		if ( ! WC()->session->has_session() ) {
+			WC()->session->set_customer_session_cookie( true );
+		}
+		
+		if ( is_null( WC()->cart ) ) {
 			return new WP_Error( 'bhfe_missing_cart', __( 'Unable to access the cart. Please try again.', 'bhfe-groups' ) );
 		}
 		
