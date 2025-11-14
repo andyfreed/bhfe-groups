@@ -29,6 +29,7 @@ class BHFE_Groups_Enrollment {
 		}
 		
 		$table = $wpdb->prefix . 'bhfe_group_enrollments';
+		$course_price = $this->get_course_price( $course_id );
 		
 		// Check if already enrolled
 		$existing = $wpdb->get_var( $wpdb->prepare( 
@@ -52,9 +53,12 @@ class BHFE_Groups_Enrollment {
 				'course_id' => absint( $course_id ),
 				'course_version' => absint( $course_version ),
 				'enrolled_by' => absint( $enrolled_by ),
-				'status' => 'pending'
+				'status' => 'pending',
+				'course_price' => $course_price,
+				'reporting_fee_total' => 0,
+				'reporting_fee_details' => maybe_serialize( array() ),
 			),
-			array( '%d', '%d', '%d', '%d', '%d', '%s' )
+			array( '%d', '%d', '%d', '%d', '%d', '%s', '%f', '%f', '%s' )
 		);
 		
 		if ( $result ) {
@@ -81,28 +85,53 @@ class BHFE_Groups_Enrollment {
 	/**
 	 * Unenroll user from course
 	 */
-	public function unenroll_user( $group_id, $user_id, $course_id, $course_version = 1 ) {
+	public function unenroll_user( $group_id, $user_id, $course_id, $course_version = 1, $enrollment_id = 0 ) {
 		global $wpdb;
 		
 		$table = $wpdb->prefix . 'bhfe_group_enrollments';
+		$target_enrollment = null;
+		
+		if ( $enrollment_id ) {
+			$target_enrollment = $this->get_enrollment( $enrollment_id );
+			if ( ! $target_enrollment || intval( $target_enrollment->group_id ) !== intval( $group_id ) ) {
+				return false;
+			}
+		} else {
+			$target_enrollment = $wpdb->get_row( $wpdb->prepare(
+				"SELECT * FROM $table 
+				WHERE group_id = %d AND user_id = %d AND course_id = %d 
+				AND status = 'active'
+				ORDER BY enrolled_at DESC 
+				LIMIT 1",
+				absint( $group_id ),
+				absint( $user_id ),
+				absint( $course_id )
+			) );
+		}
+		
+		if ( ! $target_enrollment ) {
+			return false;
+		}
 		
 		$result = $wpdb->update(
 			$table,
 			array( 'status' => 'cancelled' ),
-			array( 
-				'group_id' => absint( $group_id ),
-				'user_id' => absint( $user_id ),
-				'course_id' => absint( $course_id ),
-				'course_version' => absint( $course_version )
-			),
+			array( 'id' => absint( $target_enrollment->id ) ),
 			array( '%s' ),
-			array( '%d', '%d', '%d', '%d' )
+			array( '%d' )
 		);
 		
-		// Note: We don't actually remove the FLMS enrollment, just mark it as cancelled in our system
-		// This allows for tracking and potential reactivation
+		if ( false === $result ) {
+			return false;
+		}
 		
-		return $result !== false;
+		$this->process_flms_unenrollment(
+			$target_enrollment->user_id,
+			$target_enrollment->course_id,
+			$target_enrollment->course_version
+		);
+		
+		return true;
 	}
 	
 	/**
@@ -172,6 +201,28 @@ class BHFE_Groups_Enrollment {
 	}
 	
 	/**
+	 * Process FLMS unenrollment when removing a user from a course
+	 */
+	private function process_flms_unenrollment( $user_id, $course_id, $course_version ) {
+		if ( function_exists( 'flms_unenroll_user' ) ) {
+			flms_unenroll_user( $user_id, $course_id, $course_version );
+			return;
+		}
+		
+		if ( class_exists( 'FLMS_Course_Progress' ) ) {
+			$progress = new FLMS_Course_Progress();
+			if ( method_exists( $progress, 'unenroll_user' ) ) {
+				$progress->unenroll_user( $user_id, $course_id, $course_version );
+				return;
+			}
+			
+			if ( method_exists( $progress, 'reset_course_progress' ) ) {
+				$progress->reset_course_progress( $user_id, $course_id, $course_version );
+			}
+		}
+	}
+	
+	/**
 	 * Get course price for enrollment
 	 */
 	public function get_course_price( $course_id ) {
@@ -185,6 +236,64 @@ class BHFE_Groups_Enrollment {
 		}
 		
 		return 0;
+	}
+	
+	/**
+	 * Retrieve enrollment row by ID
+	 */
+	public function get_enrollment( $enrollment_id ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'bhfe_group_enrollments';
+		
+		return $wpdb->get_row( $wpdb->prepare(
+			"SELECT * FROM $table WHERE id = %d",
+			absint( $enrollment_id )
+		) );
+	}
+	
+	/**
+	 * Update reporting fee details for an enrollment
+	 */
+	public function set_enrollment_fee_details( $enrollment_id, $fee_amount, $fee_label = '' ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'bhfe_group_enrollments';
+		
+		$enrollment = $this->get_enrollment( $enrollment_id );
+		if ( ! $enrollment ) {
+			return false;
+		}
+		
+		$current_total = isset( $enrollment->reporting_fee_total ) ? floatval( $enrollment->reporting_fee_total ) : 0;
+		$fee_amount = floatval( $fee_amount );
+		if ( $fee_amount <= 0 ) {
+			return true;
+		}
+		
+		$details = array();
+		if ( ! empty( $enrollment->reporting_fee_details ) ) {
+			$decoded = maybe_unserialize( $enrollment->reporting_fee_details );
+			if ( is_array( $decoded ) ) {
+				$details = $decoded;
+			}
+		}
+		
+		$details[] = array(
+			'label' => $fee_label ? sanitize_text_field( $fee_label ) : __( 'Reporting Fee', 'bhfe-groups' ),
+			'amount' => $fee_amount,
+		);
+		
+		$new_total = $current_total + $fee_amount;
+		
+		return $wpdb->update(
+			$table,
+			array(
+				'reporting_fee_total' => $new_total,
+				'reporting_fee_details' => maybe_serialize( $details ),
+			),
+			array( 'id' => absint( $enrollment_id ) ),
+			array( '%f', '%s' ),
+			array( '%d' )
+		);
 	}
 }
 

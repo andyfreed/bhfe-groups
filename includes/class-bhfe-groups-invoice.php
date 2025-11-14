@@ -28,8 +28,14 @@ class BHFE_Groups_Invoice {
 		$total = 0;
 		
 		foreach ( $pending_enrollments as $enrollment ) {
-			$price = $enrollment_class->get_course_price( $enrollment->course_id );
+			// Use stored course_price if available, otherwise calculate
+			$price = isset( $enrollment->course_price ) ? floatval( $enrollment->course_price ) : $enrollment_class->get_course_price( $enrollment->course_id );
 			$total += floatval( $price );
+			
+			// Add reporting fees
+			if ( isset( $enrollment->reporting_fee_total ) ) {
+				$total += floatval( $enrollment->reporting_fee_total );
+			}
 		}
 		
 		return $total;
@@ -52,8 +58,15 @@ class BHFE_Groups_Invoice {
 		$enrollment_ids = array();
 		
 		foreach ( $pending_enrollments as $enrollment ) {
-			$price = $enrollment_class->get_course_price( $enrollment->course_id );
+			// Use stored course_price if available, otherwise calculate
+			$price = isset( $enrollment->course_price ) ? floatval( $enrollment->course_price ) : $enrollment_class->get_course_price( $enrollment->course_id );
 			$total += floatval( $price );
+			
+			// Add reporting fees
+			if ( isset( $enrollment->reporting_fee_total ) ) {
+				$total += floatval( $enrollment->reporting_fee_total );
+			}
+			
 			$enrollment_ids[] = $enrollment->id;
 		}
 		

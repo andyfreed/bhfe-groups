@@ -704,13 +704,24 @@ class BHFE_Groups_WooCommerce {
 			$order->update_meta_data( '_bhfe_group_admin_checkout', 'yes' );
 			$order->save();
 			
-			// Link enrollments to order
+			// Link enrollments to order and capture reporting fees
+			$enrollment = BHFE_Groups_Enrollment::get_instance();
 			global $wpdb;
 			$table = $wpdb->prefix . 'bhfe_group_enrollments';
 			$placeholders = implode( ',', array_fill( 0, count( $enrollment_ids ), '%d' ) );
 			$query = "UPDATE $table SET order_id = %d WHERE id IN ($placeholders)";
 			$params = array_merge( array( $order_id ), $enrollment_ids );
 			$wpdb->query( $wpdb->prepare( $query, $params ) );
+			
+			// Capture reporting fees for each enrollment from order items
+			foreach ( $order->get_items() as $item ) {
+				$item_group_id = $item->get_meta( '_bhfe_group_id' );
+				$item_enrollment_id = $item->get_meta( '_bhfe_group_enrollment_id' );
+				
+				if ( $item_group_id == $group_id && $item_enrollment_id && in_array( $item_enrollment_id, $enrollment_ids ) ) {
+					$this->capture_reporting_fees_for_enrollment( $item_enrollment_id, $item, $order );
+				}
+			}
 			
 			// Create invoice
 			$invoice = BHFE_Groups_Invoice::get_instance();
@@ -783,13 +794,18 @@ class BHFE_Groups_WooCommerce {
 				}
 				
 				// Enroll user in course
-				$enrollment->enroll_user( 
+				$enrollment_id = $enrollment->enroll_user( 
 					$group->id, 
 					$user_id, 
 					$course_id, 
 					$course_version,
 					$user_id // Self-enrolled via checkout
 				);
+				
+				// Capture reporting fees for this enrollment
+				if ( $enrollment_id ) {
+					$this->capture_reporting_fees_for_enrollment( $enrollment_id, $item, $order );
+				}
 				
 				// Only link enrollment to order if user is the group manager
 				// Regular members' enrollments should remain "pending" (order_id = NULL) 
@@ -970,48 +986,16 @@ JS;
 	}
 	
 	/**
-	 * Remove reporting fee charges for group users so totals remain unchanged.
+	 * Ensure reporting fees are auto-accepted for group users (but keep them in cart).
+	 * This hook is kept for compatibility but we don't remove fees anymore.
+	 * Fees should remain in the cart to be included in totals.
 	 *
 	 * @param WC_Cart $cart Cart object.
 	 */
 	public function remove_reporting_fee_charges_for_group_users( $cart ) {
-		if ( is_admin() && ! wp_doing_ajax() ) {
-			return;
-		}
-		
-		if ( ! $this->current_user_is_in_group() ) {
-			return;
-		}
-		
-		if ( ! $cart || ! method_exists( $cart, 'fees_api' ) ) {
-			return;
-		}
-		
-		$fees_api = $cart->fees_api();
-		
-		if ( ! $fees_api || ! method_exists( $fees_api, 'get_fees' ) ) {
-			return;
-		}
-		
-		$fees_to_remove = array();
-		
-		foreach ( $fees_api->get_fees() as $fee ) {
-			if ( isset( $fee->name ) && false !== stripos( $fee->name, 'reporting fee' ) ) {
-				$fees_to_remove[] = $fee->id;
-			}
-		}
-		
-		if ( empty( $fees_to_remove ) ) {
-			return;
-		}
-		
-		foreach ( $fees_to_remove as $fee_id ) {
-			if ( method_exists( $fees_api, 'remove_fee' ) ) {
-				$fees_api->remove_fee( $fee_id );
-			} elseif ( property_exists( $fees_api, 'fees' ) && isset( $fees_api->fees[ $fee_id ] ) ) {
-				unset( $fees_api->fees[ $fee_id ] );
-			}
-		}
+		// We no longer remove reporting fees - they should be included in totals
+		// This method is kept for hook compatibility but does nothing
+		return;
 	}
 	
 	/**
@@ -1031,6 +1015,11 @@ JS;
 			if ( $group ) {
 				$item->add_meta_data( '_bhfe_group_id', $group->id );
 				$item->add_meta_data( '_bhfe_group_name', $group->name );
+				
+				// Store enrollment ID if available (for group admin checkout)
+				if ( isset( $values['bhfe_group_enrollment_id'] ) ) {
+					$item->add_meta_data( '_bhfe_group_enrollment_id', absint( $values['bhfe_group_enrollment_id'] ) );
+				}
 			}
 		} else {
 			// Regular group member checkout
@@ -1453,6 +1442,60 @@ JS;
 		}
 	}
 
+	/**
+	 * Capture reporting fees for an enrollment from order item
+	 *
+	 * @param int $enrollment_id Enrollment ID
+	 * @param WC_Order_Item_Product $item Order item
+	 * @param WC_Order $order Order object
+	 */
+	private function capture_reporting_fees_for_enrollment( $enrollment_id, $item, $order ) {
+		$enrollment = BHFE_Groups_Enrollment::get_instance();
+		
+		// Check order fees for reporting fees related to this item
+		$item_product_id = $item->get_product_id();
+		$item_variation_id = $item->get_variation_id();
+		
+		foreach ( $order->get_fees() as $fee ) {
+			$fee_name = $fee->get_name();
+			if ( false === stripos( $fee_name, 'reporting fee' ) ) {
+				continue;
+			}
+			
+			// Check if this fee is associated with this item
+			// FLMS might store the product/variation ID in fee meta
+			$fee_meta = $fee->get_meta_data();
+			$fee_product_id = null;
+			foreach ( $fee_meta as $meta ) {
+				if ( isset( $meta->key ) && ( $meta->key === '_product_id' || $meta->key === '_variation_id' ) ) {
+					$fee_product_id = $meta->value;
+					break;
+				}
+			}
+			
+			// If fee is associated with this item, or if we can't determine association, add it
+			if ( ! $fee_product_id || $fee_product_id == $item_product_id || $fee_product_id == $item_variation_id ) {
+				$fee_amount = floatval( $fee->get_amount() );
+				if ( $fee_amount > 0 ) {
+					$enrollment->set_enrollment_fee_details( $enrollment_id, $fee_amount, $fee_name );
+				}
+			}
+		}
+		
+		// Also check item meta for reporting fee information
+		$item_meta = $item->get_meta_data();
+		foreach ( $item_meta as $meta ) {
+			if ( isset( $meta->key ) && false !== stripos( $meta->key, 'reporting_fee' ) ) {
+				$fee_amount = floatval( $meta->value );
+				if ( $fee_amount > 0 ) {
+					$fee_label = str_replace( array( '_', '-' ), ' ', $meta->key );
+					$fee_label = ucwords( $fee_label );
+					$enrollment->set_enrollment_fee_details( $enrollment_id, $fee_amount, $fee_label );
+				}
+			}
+		}
+	}
+	
 	/**
 	 * Determine if the current user has access to any active group
 	 *

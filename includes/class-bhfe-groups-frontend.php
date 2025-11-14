@@ -412,6 +412,8 @@ class BHFE_Groups_Frontend {
 				
 				var userId = $(this).data('user-id');
 				var courseId = $(this).data('course-id');
+				var courseVersion = $(this).data('course-version') || 1;
+				var enrollmentId = $(this).data('enrollment-id') || $(this).closest('tr').data('enrollment-id') || 0;
 				
 				$.ajax({
 					url: ajaxUrl,
@@ -421,6 +423,8 @@ class BHFE_Groups_Frontend {
 						group_id: groupId,
 						user_id: userId,
 						course_id: courseId,
+						course_version: courseVersion,
+						enrollment_id: enrollmentId,
 						nonce: nonce
 					},
 					success: function(response) {

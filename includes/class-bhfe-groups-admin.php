@@ -254,6 +254,7 @@ class BHFE_Groups_Admin {
 		$user_id = isset( $_POST['user_id'] ) ? absint( $_POST['user_id'] ) : 0;
 		$course_id = isset( $_POST['course_id'] ) ? absint( $_POST['course_id'] ) : 0;
 		$course_version = isset( $_POST['course_version'] ) ? absint( $_POST['course_version'] ) : 1;
+		$enrollment_id = isset( $_POST['enrollment_id'] ) ? absint( $_POST['enrollment_id'] ) : 0;
 		$current_user_id = get_current_user_id();
 		
 		if ( ! $group_id || ! $user_id || ! $course_id ) {
@@ -267,7 +268,19 @@ class BHFE_Groups_Admin {
 		}
 		
 		$enrollment = BHFE_Groups_Enrollment::get_instance();
-		$result = $enrollment->unenroll_user( $group_id, $user_id, $course_id, $course_version );
+		
+		if ( $enrollment_id ) {
+			$enrollment_record = $enrollment->get_enrollment( $enrollment_id );
+			if ( ! $enrollment_record || intval( $enrollment_record->group_id ) !== intval( $group_id ) ) {
+				wp_send_json_error( array( 'message' => __( 'Enrollment not found.', 'bhfe-groups' ) ) );
+			}
+			
+			$user_id = intval( $enrollment_record->user_id );
+			$course_id = intval( $enrollment_record->course_id );
+			$course_version = intval( $enrollment_record->course_version );
+		}
+		
+		$result = $enrollment->unenroll_user( $group_id, $user_id, $course_id, $course_version, $enrollment_id );
 		
 		if ( $result ) {
 			wp_send_json_success( array( 'message' => __( 'User unenrolled from course.', 'bhfe-groups' ) ) );

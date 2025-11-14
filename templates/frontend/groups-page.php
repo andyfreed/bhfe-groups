@@ -173,10 +173,35 @@ if ( $selected_group_id ) {
 								</tr>
 							<?php else : ?>
 								<?php foreach ( $enrollments as $enroll ) : ?>
+									<?php
+									$course_price = isset( $enroll->course_price ) ? floatval( $enroll->course_price ) : $enrollment->get_course_price( $enroll->course_id );
+									$reporting_fee_total = isset( $enroll->reporting_fee_total ) ? floatval( $enroll->reporting_fee_total ) : 0;
+									$reporting_fee_details = isset( $enroll->reporting_fee_details ) ? maybe_unserialize( $enroll->reporting_fee_details ) : array();
+									$has_reporting_fees = ! empty( $reporting_fee_details ) && is_array( $reporting_fee_details );
+									?>
 									<tr data-enrollment-id="<?php echo esc_attr( $enroll->id ); ?>">
 										<td><?php echo esc_html( $enroll->display_name ); ?></td>
-										<td><?php echo esc_html( $enroll->course_title ? $enroll->course_title : 'Course #' . $enroll->course_id ); ?></td>
-										<td><?php echo wc_price( $enrollment->get_course_price( $enroll->course_id ) ); ?></td>
+										<td>
+											<?php echo esc_html( $enroll->course_title ? $enroll->course_title : 'Course #' . $enroll->course_id ); ?>
+											<?php if ( $has_reporting_fees ) : ?>
+												<ul style="margin: 5px 0 0 20px; list-style: disc; font-size: 0.9em; color: #666;">
+													<?php foreach ( $reporting_fee_details as $fee_detail ) : ?>
+														<?php if ( isset( $fee_detail['amount'] ) && floatval( $fee_detail['amount'] ) > 0 ) : ?>
+															<li>
+																<?php echo esc_html( isset( $fee_detail['label'] ) ? $fee_detail['label'] : __( 'Reporting Fee', 'bhfe-groups' ) ); ?>: 
+																<?php echo wc_price( floatval( $fee_detail['amount'] ) ); ?>
+															</li>
+														<?php endif; ?>
+													<?php endforeach; ?>
+												</ul>
+											<?php endif; ?>
+										</td>
+										<td>
+											<?php echo wc_price( $course_price ); ?>
+											<?php if ( $reporting_fee_total > 0 ) : ?>
+												<br><small style="color: #666;"><?php echo wc_price( $reporting_fee_total ); ?> <?php esc_html_e( 'fees', 'bhfe-groups' ); ?></small>
+											<?php endif; ?>
+										</td>
 										<td><?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $enroll->enrolled_at ) ) ); ?></td>
 										<td>
 											<span class="status-<?php echo esc_attr( $enroll->status ); ?>">
@@ -187,7 +212,9 @@ if ( $selected_group_id ) {
 											<?php if ( $enroll->status === 'active' && ! $enroll->order_id ) : ?>
 												<button type="button" class="button-link bhfe-unenroll" 
 													data-user-id="<?php echo esc_attr( $enroll->user_id ); ?>"
-													data-course-id="<?php echo esc_attr( $enroll->course_id ); ?>">
+													data-course-id="<?php echo esc_attr( $enroll->course_id ); ?>"
+													data-course-version="<?php echo esc_attr( isset( $enroll->course_version ) ? $enroll->course_version : 1 ); ?>"
+													data-enrollment-id="<?php echo esc_attr( $enroll->id ); ?>">
 													<?php esc_html_e( 'Unenroll', 'bhfe-groups' ); ?>
 												</button>
 											<?php endif; ?>
