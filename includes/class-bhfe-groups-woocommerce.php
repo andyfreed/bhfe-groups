@@ -236,14 +236,25 @@ class BHFE_Groups_WooCommerce {
 				WC()->cart->cart_contents[ $cart_item_key ]['bhfe_course_id'] = $enroll->course_id;
 				$added_count++;
 			} else {
-				$errors[] = sprintf( __( 'Failed to add course to cart: %s', 'bhfe-groups' ), $enroll->course_title ? $enroll->course_title : 'Course #' . $enroll->course_id );
+				$errors[] = sprintf(
+					__( 'Failed to add course to cart: %s (product %d, variation %d)', 'bhfe-groups' ),
+					$enroll->course_title ? $enroll->course_title : 'Course #' . $enroll->course_id,
+					$product_data['product_id'],
+					$product_data['variation_id']
+				);
 			}
 		}
 		
 		WC()->cart->set_session();
 		
 		if ( 0 === $added_count ) {
-			return new WP_Error( 'bhfe_cart_error', __( 'Unable to add pending enrollments to the cart.', 'bhfe-groups' ) );
+			$message = __( 'Unable to add pending enrollments to the cart.', 'bhfe-groups' );
+			
+			if ( ! empty( $errors ) ) {
+				$message .= ' ' . implode( ' ', $errors );
+			}
+			
+			return new WP_Error( 'bhfe_cart_error', $message );
 		}
 		
 		return array(
