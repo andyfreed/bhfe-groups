@@ -11,6 +11,13 @@ class BHFE_Groups_WooCommerce {
 	
 	private static $instance = null;
 	
+	/**
+	 * Cache whether the current user belongs to any BHFE group.
+	 *
+	 * @var null|bool
+	 */
+	private $current_user_has_group = null;
+	
 	public static function get_instance() {
 		if ( null === self::$instance ) {
 			self::$instance = new self();
@@ -77,6 +84,11 @@ class BHFE_Groups_WooCommerce {
 		
 		// AJAX: prepare group checkout
 		add_action( 'wp_ajax_bhfe_groups_prepare_checkout', array( $this, 'ajax_prepare_group_checkout' ) );
+		
+		// Disable reporting fee UI/charges for group users
+		add_filter( 'flms_group_reporting_fees', array( $this, 'filter_group_reporting_fees' ), 99 );
+		add_action( 'wp_enqueue_scripts', array( $this, 'maybe_hide_reporting_fee_options' ) );
+		add_action( 'woocommerce_cart_calculate_fees', array( $this, 'remove_reporting_fee_charges_for_group_users' ), 998 );
 	}
 	
 	/**
@@ -832,6 +844,175 @@ class BHFE_Groups_WooCommerce {
 		
 		return false;
 	}
+
+	/**
+	 * Filter reporting fee availability for group users.
+	 *
+	 * @param bool $allow Whether reporting fees should be shown.
+	 * @return bool
+	 */
+	public function filter_group_reporting_fees( $allow ) {
+		if ( $this->current_user_is_in_group() ) {
+			return false;
+		}
+		
+		return $allow;
+	}
+	
+	/**
+	 * Hide reporting fee dropdowns and auto-select acceptance for group members.
+	 */
+	public function maybe_hide_reporting_fee_options() {
+		if ( is_admin() || wp_doing_ajax() ) {
+			return;
+		}
+		
+		if ( ! $this->current_user_is_in_group() ) {
+			return;
+		}
+		
+		$should_target = false;
+		
+		if ( is_singular( 'flms-courses' ) ) {
+			$should_target = true;
+		}
+		
+		if ( function_exists( 'is_product' ) && is_product() ) {
+			$should_target = true;
+		}
+		
+		if ( function_exists( 'is_shop' ) && is_shop() ) {
+			$should_target = true;
+		}
+		
+		if ( function_exists( 'is_cart' ) && is_cart() ) {
+			$should_target = true;
+		}
+		
+		if ( function_exists( 'is_checkout' ) && is_checkout() ) {
+			$should_target = true;
+		}
+		
+		if ( function_exists( 'is_account_page' ) && is_account_page() ) {
+			$should_target = true;
+		}
+		
+		if ( ! $should_target ) {
+			return;
+		}
+		
+		wp_enqueue_script( 'jquery' );
+		
+		$script = <<<JS
+		(function($){
+			function hideReportingFeeFields(context){
+				var $context = context || $(document);
+				var $candidates = $context.find('[data-reporting-fee], .flms-reporting-fee, .bhfe-reporting-fee');
+				
+				if(!$candidates.length){
+					$candidates = $context.find('label').filter(function(){
+						return $(this).text().toLowerCase().indexOf('reporting fee') !== -1;
+					}).closest('.flms-field, .field, .form-row, .flms-course-field, .woocommerce-input-wrapper, .form-group');
+				}
+				
+				$candidates.each(function(){
+					var $field = $(this);
+					
+					$field.find('select').each(function(){
+						var $select = $(this);
+						var preferred = $select.find('option[data-fee="0"]').val() ||
+							$select.find('option[value="0"]').val() ||
+							$select.find('option[value="accept"]').val() ||
+							$select.find('option[value="yes"]').val() ||
+							$select.find('option:last').val();
+						
+						if(preferred && $select.val() !== preferred){
+							$select.val(preferred).trigger('change');
+						}
+					});
+					
+					$field.find('input[type="checkbox"], input[type="radio"]').each(function(){
+						var $input = $(this);
+						if(!$input.is(':checked')){
+							$input.prop('checked', true).trigger('change');
+						}
+					});
+					
+					$field.addClass('bhfe-reporting-fee-hidden').attr('aria-hidden', 'true').hide();
+				});
+			}
+			
+			$(function(){
+				$('body').addClass('bhfe-group-no-reporting-fees');
+				hideReportingFeeFields();
+				
+				if(typeof MutationObserver !== 'undefined'){
+					var observer = new MutationObserver(function(){
+						hideReportingFeeFields();
+					});
+					observer.observe(document.body, { childList: true, subtree: true });
+				} else {
+					setInterval(hideReportingFeeFields, 1000);
+				}
+			});
+		})(jQuery);
+JS;
+		
+		wp_add_inline_script( 'jquery', $script );
+		
+		if ( ! wp_style_is( 'bhfe-groups-reporting-fees', 'registered' ) ) {
+			wp_register_style( 'bhfe-groups-reporting-fees', false );
+		}
+		
+		wp_enqueue_style( 'bhfe-groups-reporting-fees' );
+		$style = '.bhfe-reporting-fee-hidden{display:none !important;} body.bhfe-group-no-reporting-fees .bhfe-reporting-fee-hidden{display:none !important;}';
+		wp_add_inline_style( 'bhfe-groups-reporting-fees', $style );
+	}
+	
+	/**
+	 * Remove reporting fee charges for group users so totals remain unchanged.
+	 *
+	 * @param WC_Cart $cart Cart object.
+	 */
+	public function remove_reporting_fee_charges_for_group_users( $cart ) {
+		if ( is_admin() && ! wp_doing_ajax() ) {
+			return;
+		}
+		
+		if ( ! $this->current_user_is_in_group() ) {
+			return;
+		}
+		
+		if ( ! $cart || ! method_exists( $cart, 'fees_api' ) ) {
+			return;
+		}
+		
+		$fees_api = $cart->fees_api();
+		
+		if ( ! $fees_api || ! method_exists( $fees_api, 'get_fees' ) ) {
+			return;
+		}
+		
+		$fees_to_remove = array();
+		
+		foreach ( $fees_api->get_fees() as $fee ) {
+			if ( isset( $fee->name ) && false !== stripos( $fee->name, 'reporting fee' ) ) {
+				$fees_to_remove[] = $fee->id;
+			}
+		}
+		
+		if ( empty( $fees_to_remove ) ) {
+			return;
+		}
+		
+		foreach ( $fees_to_remove as $fee_id ) {
+			if ( method_exists( $fees_api, 'remove_fee' ) ) {
+				$fees_api->remove_fee( $fee_id );
+			} elseif ( property_exists( $fees_api, 'fees' ) && isset( $fees_api->fees[ $fee_id ] ) ) {
+				unset( $fees_api->fees[ $fee_id ] );
+			}
+		}
+	}
 	
 	/**
 	 * Add group info to order item
@@ -1270,6 +1451,37 @@ class BHFE_Groups_WooCommerce {
 		if ( ! $confirmed ) {
 			wc_add_notice( __( 'Please confirm that you understand the courses will be billed to the group administrator.', 'bhfe-groups' ), 'error' );
 		}
+	}
+
+	/**
+	 * Determine if the current user has access to any active group
+	 *
+	 * @return bool
+	 */
+	private function current_user_is_in_group() {
+		if ( null !== $this->current_user_has_group ) {
+			return $this->current_user_has_group;
+		}
+		
+		$user_id = get_current_user_id();
+		
+		if ( ! $user_id ) {
+			$this->current_user_has_group = false;
+			return false;
+		}
+		
+		$db = BHFE_Groups_Database::get_instance();
+		
+		$member_groups = $db->get_user_groups( $user_id );
+		if ( ! empty( $member_groups ) ) {
+			$this->current_user_has_group = true;
+			return true;
+		}
+		
+		$admin_groups = $db->get_groups_by_admin( $user_id );
+		$this->current_user_has_group = ! empty( $admin_groups );
+		
+		return $this->current_user_has_group;
 	}
 }
 
