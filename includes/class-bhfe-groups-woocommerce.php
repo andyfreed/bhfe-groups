@@ -209,20 +209,26 @@ class BHFE_Groups_WooCommerce {
 		$errors = array();
 		
 		foreach ( $pending_enrollments as $enroll ) {
-			$product_id = $this->get_product_id_from_course( $enroll->course_id );
+			$product_data = $this->get_product_data_from_course( $enroll->course_id );
 			
-			if ( ! $product_id ) {
+			if ( ! $product_data ) {
 				$errors[] = sprintf( __( 'Could not find product for course: %s', 'bhfe-groups' ), $enroll->course_title ? $enroll->course_title : 'Course #' . $enroll->course_id );
 				continue;
 			}
 			
-			$product = wc_get_product( $product_id );
+			$pricing_product_id = $product_data['variation_id'] ? $product_data['variation_id'] : $product_data['product_id'];
+			$product = wc_get_product( $pricing_product_id );
 			if ( ! $product || ! $product->is_purchasable() ) {
 				$errors[] = sprintf( __( 'Product is not available for course: %s', 'bhfe-groups' ), $enroll->course_title ? $enroll->course_title : 'Course #' . $enroll->course_id );
 				continue;
 			}
 			
-			$cart_item_key = WC()->cart->add_to_cart( $product_id, 1 );
+			$cart_item_key = WC()->cart->add_to_cart(
+				$product_data['product_id'],
+				1,
+				$product_data['variation_id'],
+				$product_data['variation']
+			);
 			
 			if ( $cart_item_key ) {
 				WC()->cart->cart_contents[ $cart_item_key ]['bhfe_group_enrollment_id'] = $enroll->id;
@@ -248,17 +254,16 @@ class BHFE_Groups_WooCommerce {
 	}
 	
 	/**
-	 * Get WooCommerce product ID from course ID
+	 * Get WooCommerce product data (simple or variation) from course ID
 	 */
-	private function get_product_id_from_course( $course_id ) {
-		// First check if course has product_id meta
+	private function get_product_data_from_course( $course_id ) {
 		$product_id = get_post_meta( $course_id, 'flms_woocommerce_product_id', true );
 		
 		if ( $product_id ) {
-			return $product_id;
+			return $this->normalize_product_data( $product_id );
 		}
 		
-		// Try to find product that links to this course
+		// Try to find direct product link
 		$products = get_posts( array(
 			'post_type' => 'product',
 			'posts_per_page' => 1,
@@ -272,27 +277,52 @@ class BHFE_Groups_WooCommerce {
 		) );
 		
 		if ( ! empty( $products ) ) {
-			return $products[0]->ID;
+			return $this->normalize_product_data( $products[0]->ID );
 		}
 		
-		// Check variable products
-		$variable_products = get_posts( array(
+		// Check for variations linked to the course
+		$variation_posts = get_posts( array(
 			'post_type' => 'product_variation',
 			'posts_per_page' => 1,
 			'meta_query' => array(
 				array(
 					'key' => 'flms_woocommerce_variable_course_ids',
-					'value' => $course_id,
+					'value' => '"' . $course_id . '"',
 					'compare' => 'LIKE'
 				)
 			)
 		) );
 		
-		if ( ! empty( $variable_products ) ) {
-			return $variable_products[0]->ID;
+		if ( ! empty( $variation_posts ) ) {
+			return $this->normalize_product_data( $variation_posts[0]->ID );
 		}
 		
 		return null;
+	}
+	
+	/**
+	 * Normalize product data for cart usage
+	 */
+	private function normalize_product_data( $product_identifier ) {
+		$product = wc_get_product( $product_identifier );
+		
+		if ( ! $product ) {
+			return null;
+		}
+		
+		if ( $product->is_type( 'variation' ) ) {
+			return array(
+				'product_id'   => $product->get_parent_id(),
+				'variation_id' => $product->get_id(),
+				'variation'    => $product->get_attributes(),
+			);
+		}
+		
+		return array(
+			'product_id'   => $product->get_id(),
+			'variation_id' => 0,
+			'variation'    => array(),
+		);
 	}
 	
 	/**
